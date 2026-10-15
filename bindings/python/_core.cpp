@@ -1,12 +1,15 @@
 /* pybind11 bindings for the compiled ``ruptures._core`` extension.
  *
- * The C++ sources (PELT algorithm and constant-normal cost model) are imported
+ * The C++ sources (PELT algorithm and the cost model classes) are imported
  * from the `biblio-these` / `miniruptures` project; this file only
  * assembles the Python-facing bindings, extracting the relevant sections of
  * the upstream `py_bind_algorithms.cpp` and `py_bind_models.cpp` files.
  * Algorithm_pelt is further extended with min_size/jump parameters following
- * the grid semantics of ruptures' pure Python Pelt (the other sources are
- * verbatim).
+ * the grid semantics of ruptures' pure Python Pelt; the model classes are
+ * copied verbatim. Upstream's Model_Factory.h and Model_splineop.h (and its
+ * Functions/Faulhaber dependency, which Model_splineop.h includes) are not
+ * synced yet: the factory includes Model_splineop.h, so both are left for a
+ * dedicated splineop pass.
  *
  * The Python-visible names (``models.ConstantNormal``, ``algorithms.PELT``,
  * ...) follow the upstream binding names; the C++ class names are left
@@ -26,6 +29,13 @@
 #include "Algorithms/Algorithm_pelt.h"
 #include "Models/Model_Base.h"
 #include "Models/Model_constant_normal.h"
+#include "Models/Model_constant_poisson.h"
+#include "Models/Model_constant_exponential.h"
+#include "Models/Model_constant_binomial.h"
+#include "Models/Model_constant_rank.h"
+#include "Models/Model_linear.h"
+#include "Models/Model_linear_continuous.h"
+#include "Models/Model_meanvar.h"
 
 namespace py = pybind11;
 
@@ -59,6 +69,121 @@ void init_models(py::module_ &models) {
         )
         .def("get_cumsum_squared_y", &Model_constant_normal::get_cumsum_squared_y
             , "Get the cumulative sum of squares of the data"
+    );
+
+    // Bind Model_constant_poisson class
+    py::class_<Model_constant_poisson, Model_Base>(models
+        , "ConstantPoisson"
+        , "Model for detecting changes in mean with Poisson noise.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_constant_poisson::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+        )
+        .def("get_cumsum_y", &Model_constant_poisson::get_cumsum_y
+            , "Get the cumulative sum of the data"
+    );
+
+    // Bind Model_constant_exponential class
+    py::class_<Model_constant_exponential, Model_Base>(models
+        , "ConstantExponential"
+        , "Model for detecting changes in mean with Exponential noise.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_constant_exponential::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+        )
+        .def("get_cumsum_y", &Model_constant_exponential::get_cumsum_y
+            , "Get the cumulative sum of the data"
+    );
+
+    // Bind Model_constant_binomial class
+    py::class_<Model_constant_binomial, Model_Base>(models
+        , "ConstantBinomial"
+        , "Model for detecting changes in mean with Binomial noise.")
+        .def(py::init([](const arma::Mat<double>& data, int m) {
+                if (m == 1) {
+                    PyErr_WarnEx(PyExc_UserWarning, "Binomial model requires m > 1", 1);
+                }
+                return std::make_unique<Model_constant_binomial>(data, m);
+            })
+            ,"Constructor that takes a 2D numpy array and the number of "
+            "trials m of the binomial"
+            ,py::arg("data"), py::arg("m") = 1
+        )
+        .def("compute_segment_cost", &Model_constant_binomial::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+        )
+        .def("get_cumsum_y", &Model_constant_binomial::get_cumsum_y
+            , "Get the cumulative sum of the data"
+    );
+
+    // Bind Model_constant_rank class
+    py::class_<Model_constant_rank, Model_Base>(models
+        , "ConstantRank"
+        , "Model for detecting changes in rank with rank-based noise.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_constant_rank::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+        )
+        .def("get_centered_ranks", &Model_constant_rank::get_centered_ranks
+            , "Get the centered ranks of the data"
+        )
+        .def("get_cusum_ranks", &Model_constant_rank::get_cusum_ranks
+            , "Get the cumulative sum of ranks of the data"
+        )
+        .def("get_inv_cov", &Model_constant_rank::get_inv_cov
+            , "Get the inverse covariance matrix of the ranks"
+    );
+
+    // Bind Model_linear class
+    py::class_<Model_linear, Model_Base>(models
+        , "CostLinear"
+        , "Model for detecting changes in linear regression coefficients with Gaussian noise.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_linear::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_linear_continuous class
+    py::class_<Model_linear_continuous, Model_Base>(models
+        , "CostLinearContinuous"
+        , "Model for detecting changes in continuous linear regression coefficients with Gaussian noise.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_linear_continuous::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_meanvar class
+    py::class_<Model_meanvar, Model_Base>(models
+        , "CostMeanVar"
+        , "Model for detecting changes in mean and variance with Gaussian noise.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_meanvar::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
     );
 }
 
@@ -106,7 +231,7 @@ void init_algorithms(py::module_ &algorithms) {
 
 PYBIND11_MODULE(_core, m) {
     m.doc() =
-        "Compiled C++ core for ruptures (PELT + constant-normal cost), "
+        "Compiled C++ core for ruptures (PELT and cost model classes), "
         "imported from the biblio-these / miniruptures project sources.";
 
     py::module_ models = m.def_submodule("models", "Cost models.");
