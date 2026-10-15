@@ -59,6 +59,13 @@ def pybind_ext_modules():
                 "bindings/python/_core.cpp",
                 "cpp/Algorithms/Algorithm_pelt.cpp",
                 "cpp/Models/Model_constant_normal.cpp",
+                "cpp/Models/Model_constant_poisson.cpp",
+                "cpp/Models/Model_constant_exponential.cpp",
+                "cpp/Models/Model_constant_binomial.cpp",
+                "cpp/Models/Model_constant_rank.cpp",
+                "cpp/Models/Model_linear.cpp",
+                "cpp/Models/Model_linear_continuous.cpp",
+                "cpp/Models/Model_meanvar.cpp",
             ],
             # carma bridges NumPy and Armadillo, so the NumPy headers are needed.
             include_dirs=CPP_INCLUDE_DIRS + [numpy.get_include()],
