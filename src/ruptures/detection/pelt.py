@@ -6,10 +6,15 @@ from typing_extensions import Self
 
 import numpy as np
 from numpy.typing import NDArray
-from ruptures.costs import cost_factory
+from ruptures.costs import CostL2, cost_factory
 from ruptures.base import BaseCost, BaseEstimator
 from ruptures.exceptions import BadSegmentationParameters
 from ruptures.utils import sanity_check
+
+try:
+    from ruptures import _core
+except ImportError:  # compiled backend not built; the Python path is used.
+    _core = None
 
 
 class Pelt(BaseEstimator):
@@ -17,6 +22,13 @@ class Pelt(BaseEstimator):
 
     For a given model and penalty level, computes the segmentation which
     minimizes the constrained sum of approximation errors.
+
+    For a positive penalty, ``min_size`` and ``jump`` both equal to 1
+    and the built-in L2 cost, the segmentation is delegated to the
+    compiled C++ backend ``ruptures._core`` (imported from the ``biblio-
+    these`` project), which returns the same breakpoints much faster.
+    Every other configuration, or an unbuilt backend, uses the Python
+    implementation below.
     """
 
     def __init__(
@@ -46,6 +58,24 @@ class Pelt(BaseEstimator):
         self.min_size = max(min_size, self.cost.min_size)
         self.jump = jump
         self.n_samples = None
+
+    @property
+    def _use_compiled(self) -> bool:
+        """Whether this configuration is handled by the compiled backend.
+
+        The compiled implementation is the textbook PELT algorithm: every
+        index is a candidate change point (``jump == 1``) and no segment is
+        excluded (``min_size == 1``). It only knows the constant-normal cost,
+        so a built-in ``CostL2`` cost is required: subclasses or other
+        cost classes use the Python implementation, even when they happen to
+        be named ``"l2"``.
+        """
+        return (
+            _core is not None
+            and type(self.cost) is CostL2
+            and self.min_size == 1
+            and self.jump == 1
+        )
 
     def _seg(self, pen: float) -> dict[tuple[int, int], float]:
         """Computes the segmentation for a given penalty using PELT (or a list
@@ -96,6 +126,23 @@ class Pelt(BaseEstimator):
         del best_partition[(0, 0)]
         return best_partition
 
+    def _compiled_bkps(self, pen: float) -> list[int]:
+        """Return the optimal breakpoints, computed by the compiled backend.
+
+        Args:
+            pen (float): penalty value (>0)
+
+        Returns:
+            list: sorted list of breakpoints
+        """
+        # CostL2.fit() stores the signal as a 2D array but keeps its dtype, so
+        # it is normalised here into what the compiled model expects.
+        signal = np.ascontiguousarray(self.cost.signal, dtype=np.float64)
+        model = _core.models.ConstantNormal(signal)
+        algorithm = _core.algorithms.PELT(model)
+        algorithm.predict(float(pen))
+        return np.asarray(algorithm.get_changepoints(), dtype=int).ravel().tolist()
+
     def fit(self, signal: NDArray[np.number]) -> Self:
         """Set params.
 
@@ -138,6 +185,9 @@ class Pelt(BaseEstimator):
             min_size=self.min_size,
         ):
             raise BadSegmentationParameters
+
+        if self._use_compiled and pen > 0:
+            return self._compiled_bkps(pen)
 
         partition = self._seg(pen)
         bkps = sorted(e for s, e in partition.keys())
