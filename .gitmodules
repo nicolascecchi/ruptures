@@ -4,3 +4,6 @@
 [submodule "extern/carma"]
 	path = extern/carma
 	url = https://github.com/RUrlus/carma.git
+[submodule "extern/armadillo"]
+	path = extern/armadillo
+	url = https://gitlab.com/conradsnicta/armadillo-code.git
