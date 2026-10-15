@@ -7,6 +7,7 @@
 #include <limits>
 #include <iostream>
 #include <cmath>
+#include <stdexcept>
 
 constexpr double INF = std::numeric_limits<double>::infinity();
 constexpr double EPSILON = std::numeric_limits<double>::epsilon();
@@ -15,13 +16,22 @@ constexpr double EPSILON = std::numeric_limits<double>::epsilon();
  * @brief Constructs a PELT algorithm bound to a model for changepoints detection.
  *
  * The provided @p model_ supplies segment cost evaluations that the algorithm
- * reuses throughout predict() without additional copies.
+ * reuses throughout predict() without additional copies. @p min_size is the
+ * smallest admissible segment length and @p jump the step between candidate
+ * change points, following ruptures' Python Pelt semantics.
  *
  * @param[in] model_ Reference to the underlying model that computes segment costs.
+ * @param[in] min_size_ Minimum segment length (default 1: no constraint).
+ * @param[in] jump_ Step between candidate change points (default 1: every index).
  */
-Algorithm_pelt::Algorithm_pelt(Model_Base& model_)
+Algorithm_pelt::Algorithm_pelt(Model_Base& model_, arma::uword min_size_, arma::uword jump_)
 	: Algorithm_Base{model_}
+    , min_size{min_size_}
+    , jump{jump_}
     {
+    if (min_size < 1 || jump < 1){
+        throw std::invalid_argument("PELT expects min_size >= 1 and jump >= 1");
+    }
 };
 
 
@@ -40,8 +50,7 @@ Algorithm_pelt::Algorithm_pelt(Model_Base& model_)
  * 
  * @note This method modifies the internal state:
  *       - Updates @c admissible_points so that the first @c new_len entries contain the remaining admissible change-points after pruning
- *       - Updates @c admissible_size_at_t(t+1) with the new count of admissible points
- *       - Adds the current time point @c t as a candidate for future pruning (admissible_points(new_len) = t)
+ *       - Stores the new count of admissible points in @c admissible_size_at_t at the next change-point to scan (t + jump, the last observation when t + jump overshoots it)
  * 
  * @warning The method assumes that @c admissible_size_at_t(t) correctly reflects
  *          the number of valid candidates after seeing @c t points.
@@ -68,19 +77,22 @@ void Algorithm_pelt::prune(arma::uword t){
             new_len += 1;
         }
     }
-    // add the current point as a candidate for future pruning
-    // and make other necessary updates.
-    admissible_points(new_len) = t;     
-    new_len += 1;
-    admissible_size_at_t(t + 1) = new_len;
+    // the filtered starts are the initial admissible set of the next change
+    // point to scan (the last observation, when t + jump overshoots it).
+    // New starts are appended before each scan, in predict().
+    arma::uword next = t + jump;
+    if (next > model.nobs){
+        next = model.nobs;
+    }
+    admissible_size_at_t(next) = new_len;
 };
 
 /**
  * @brief Runs the PELT segmentation to compute optimal changepoints with penalty @p beta.
  *
  * This method implements the main loop of the PELT algorithm to find optimal changepoints in the data.
- * Loops over all the observations and, at each time point, computes the optimal cost of segmentation up to that point by considering all admissible previous changepoints.
- * 
+ * Loops over the candidate change points (the multiples of jump that are at least min_size, plus the last observation) and, at each candidate, computes the optimal cost of segmentation up to that point by considering all admissible previous change-points.
+ *
  * @param[in] beta Penalty added per changepoint to control segmentation complexity.
  *
  * @note The method updates the internal state of the algorithm:
@@ -94,6 +106,11 @@ void Algorithm_pelt::prune(arma::uword t){
  * @see backtrack()
  */
 void Algorithm_pelt::predict(double beta){
+    if (min_size > model.nobs){
+        // Unreachable through Pelt (sanity_check pre-validates); the guard
+        // keeps direct ruptures._core users from underflowing the grid.
+        throw std::invalid_argument("min_size cannot exceed the number of observations");
+    }
     // the algorithm was already fit before
     // reinitialize all the vectors to be sure to start from a clean state
     if (dp_cost(0)!=0){ 
@@ -110,30 +127,47 @@ void Algorithm_pelt::predict(double beta){
     dp_cost(0) = -beta;
     arma::uword best_s{0};
     arma::uword s{0};
-    admissible_size_at_t(1) = 1; // only point 0 is admissible
-
-    // t counts the number of points observed
-    // it goes from 1 point to nobs (inclusive)
-    for (arma::uword t=1; t<model.nobs+1; t++){
+    // t ranges over the candidate change points, as in ruptures' Python
+    // implementation (Pelt._seg): the multiples of jump that are at least
+    // min_size, plus the last observation, which is always evaluated even
+    // when it is off the grid (not a multiple of jump).
+    arma::uword t = jump * ((min_size + jump - 1) / jump);
+    while (true){
+        if (t > model.nobs){
+            t = model.nobs; // off-grid last observation
+        }
+        // Newest admissible start, Python's new_adm_pt: the largest grid
+        // point (multiple of jump) not exceeding t - min_size.
+        admissible_size_at_t(t) += 1;
+        admissible_points(admissible_size_at_t(t) - 1) = jump * ((t - min_size) / jump);
         // s is the index of the last (1-indexed) point of the previous segment
         // s = 0 means that the last segment starts at the beginning of the data, aka no changes,
         // otherwise we have at least one changepoint.
         // candidate = dp_cost[s] + segment_cost(s,t) + beta means
         // candidate = cost for {y_1,...,y_s} + cost for {y_{s+1},...,y_t} + penalty for the change at s
+        // Starts s with 0 < s < min_size define no valid previous segmentation,
+        // so they are skipped (Python: KeyError on partitions[s]).
         CURR_MIN = INF;
         for (arma::uword i = 0; i < admissible_size_at_t(t); i++){
             s = admissible_points(i);
+            if (s > 0 && s < min_size){
+                continue;
+            }
             segment_cost = model.compute_segment_cost(s, t);
             candidate_cost = (dp_cost(s) + segment_cost + beta);
             if (candidate_cost < CURR_MIN){
                 CURR_MIN = candidate_cost;
                 best_s = s;
             }
-        } 
+        }
         // Use segment_cost and beta to update optimal partitioning out of previous time loops
         dp_cost(t) = CURR_MIN;
         dp_prev_time(t) = best_s;
         prune(t); // updates admissible_points vector inplace
+        if (t == model.nobs){
+            break;
+        }
+        t += jump;
     }
     backtrack(); // updates changepoints vector inplace
 };

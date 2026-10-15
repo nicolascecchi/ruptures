@@ -26,15 +26,15 @@ def signal_bkps_5D():
     return signal, bkps
 
 
-def pure_python_bkps(signal, pen):
-    """Breakpoints of ``Pelt(model="l2", min_size=1, jump=1)``, Python only.
+def pure_python_bkps(signal, pen, min_size=1, jump=1):
+    """Breakpoints of ``Pelt(model="l2", min_size, jump)``, Python only.
 
     ``Pelt`` delegates that configuration to the compiled backend, so
     the module global is disabled for the duration of the call to
     exercise the reference implementation instead.
     """
     with mock.patch("ruptures.detection.pelt._core", None):
-        return Pelt(model="l2", min_size=1, jump=1).fit_predict(signal, pen)
+        return Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, pen)
 
 
 def test_core_importable():
@@ -44,8 +44,12 @@ def test_core_importable():
     assert hasattr(_core.algorithms, "PELT")
 
 
-def test_pelt_delegates_to_compiled_backend(monkeypatch, signal_bkps_1D):
-    """The (min_size=1, jump=1) L2 configuration runs the compiled backend."""
+@pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 1), (1, 2), (3, 5), (2, 5)])
+def test_pelt_delegates_to_compiled_backend(
+    monkeypatch, signal_bkps_1D, min_size, jump
+):
+    """Every valid (min_size, jump) L2 configuration runs the compiled
+    backend."""
     signal, _ = signal_bkps_1D
     pens = []
     compiled_bkps = Pelt._compiled_bkps
@@ -55,17 +59,15 @@ def test_pelt_delegates_to_compiled_backend(monkeypatch, signal_bkps_1D):
         return compiled_bkps(self, pen)
 
     monkeypatch.setattr(Pelt, "_compiled_bkps", spy)
-    Pelt(model="l2", min_size=1, jump=1).fit_predict(signal, 50.0)
+    Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, 50.0)
     assert pens == [50.0]
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"model": "l2"},  # the defaults are min_size=2, jump=5
-        {"model": "l2", "min_size": 2, "jump": 1},
-        {"model": "l2", "min_size": 1, "jump": 2},
         {"model": "l1", "min_size": 1, "jump": 1},
+        {"model": "l2", "jump": -1},  # an invalid grid stays on the Python path
     ],
 )
 def test_pelt_does_not_delegate(kwargs):
@@ -102,18 +104,51 @@ def test_constant_normal_cost_matches_costl2(signal_bkps_5D):
         )
 
 
-@pytest.mark.parametrize("pen", [10.0, 50.0, 100.0, 200.0])
-def test_matches_pure_python_pelt_1D(signal_bkps_1D, pen):
+# (min_size, jump) grid: covers m > j, m a multiple of j, m == j and m == 1.
+MIN_SIZE_JUMP = [(1, 1), (2, 1), (1, 2), (2, 5), (3, 3), (7, 3), (5, 8), (12, 5)]
+
+
+@pytest.mark.parametrize("min_size,jump", MIN_SIZE_JUMP)
+@pytest.mark.parametrize("pen", [10.0, 50.0, 200.0])
+def test_matches_pure_python_pelt_configs_1D(signal_bkps_1D, min_size, jump, pen):
     signal, _ = signal_bkps_1D
-    got = Pelt(model="l2", min_size=1, jump=1).fit_predict(signal, pen)
-    assert got == pure_python_bkps(signal, pen)
+    got = Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, pen)
+    assert got == pure_python_bkps(signal, pen, min_size=min_size, jump=jump)
 
 
-@pytest.mark.parametrize("pen", [10.0, 50.0, 100.0, 200.0])
-def test_matches_pure_python_pelt_5D(signal_bkps_5D, pen):
+@pytest.mark.parametrize("min_size,jump", [(2, 5), (7, 3)])
+@pytest.mark.parametrize("pen", [50.0, 200.0])
+def test_matches_pure_python_pelt_configs_5D(signal_bkps_5D, min_size, jump, pen):
     signal, _ = signal_bkps_5D
-    got = Pelt(model="l2", min_size=1, jump=1).fit_predict(signal, pen)
-    assert got == pure_python_bkps(signal, pen)
+    got = Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, pen)
+    assert got == pure_python_bkps(signal, pen, min_size=min_size, jump=jump)
+
+
+@pytest.mark.parametrize("n_samples", [16, 17, 26])
+@pytest.mark.parametrize("min_size,jump", [(3, 5), (12, 5)])
+def test_matches_pure_python_off_grid_starts(n_samples, min_size, jump):
+    """n_samples just past a grid point exercises duplicate admissible starts.
+
+    For such signals ``Pelt._seg`` appends the same admissible start twice
+    (Python: `jump * floor((n_samples - min_size) / jump)` for the last
+    change point equals an earlier one); the compiled implementation must
+    replicate that too.
+    """
+    signal = np.random.RandomState(n_samples).standard_normal(n_samples)
+    got = Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, 3.0)
+    assert got == pure_python_bkps(signal, 3.0, min_size=min_size, jump=jump)
+
+
+@pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 5), (3, 3), (7, 3)])
+def test_delegated_bkps_are_on_the_jump_grid(signal_bkps_1D, min_size, jump):
+    """Compiled breakpoints respect the jump grid and the minimum length."""
+    signal, _ = signal_bkps_1D
+    n = signal.shape[0]
+    bkps = Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, 50.0)
+    assert bkps == sorted(set(bkps))
+    assert bkps[-1] == n
+    assert all(b % jump == 0 for b in bkps[:-1])
+    assert all(b - s >= min_size for s, b in zip([0] + bkps[:-1], bkps))
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
@@ -139,23 +174,39 @@ def test_last_bkp_is_n_samples(signal_bkps_1D):
     assert bkps == sorted(bkps)
 
 
-def test_large_penalty_single_segment(signal_bkps_1D):
+@pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 5)])
+def test_large_penalty_single_segment(min_size, jump, signal_bkps_1D):
     signal, _ = signal_bkps_1D
-    assert Pelt(model="l2", min_size=1, jump=1).fit_predict(signal, 1e12) == [
+    assert Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, 1e12) == [
         signal.shape[0]
     ]
 
 
-def test_reusable_after_fit(signal_bkps_5D):
+@pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 5)])
+def test_reusable_after_fit(min_size, jump, signal_bkps_5D):
     signal, _ = signal_bkps_5D
-    algo = Pelt(model="l2", min_size=1, jump=1).fit(signal)
+    algo = Pelt(model="l2", min_size=min_size, jump=jump).fit(signal)
     first = algo.predict(50.0)
     second = algo.predict(50.0)
     assert first == second
 
 
-def test_accepts_non_contiguous_and_non_float(signal_bkps_5D):
+@pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 3)])
+def test_accepts_non_contiguous_and_non_float(min_size, jump, signal_bkps_5D):
     signal, _ = signal_bkps_5D
     view = np.asarray(signal, dtype=np.int64)[::1, ::2]
-    got = Pelt(model="l2", min_size=1, jump=1).fit_predict(view, 50.0)
-    assert got == pure_python_bkps(view.astype(float), 50.0)
+    got = Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(view, 50.0)
+    assert got == pure_python_bkps(
+        view.astype(float), 50.0, min_size=min_size, jump=jump
+    )
+
+
+def test_binding_rejects_invalid_parameters(signal_bkps_1D):
+    signal, _ = signal_bkps_1D
+    from ruptures import _core
+
+    model = _core.models.ConstantNormal(np.ascontiguousarray(signal, dtype=np.float64))
+    with pytest.raises(ValueError):
+        _core.algorithms.PELT(model, min_size=0)
+    with pytest.raises(ValueError):
+        _core.algorithms.PELT(model, jump=0)

@@ -1,9 +1,12 @@
 /* pybind11 bindings for the compiled ``ruptures._core`` extension.
  *
  * The C++ sources (PELT algorithm and constant-normal cost model) are imported
- * verbatim from the `biblio-these` / `miniruptures` project; this file only
+ * from the `biblio-these` / `miniruptures` project; this file only
  * assembles the Python-facing bindings, extracting the relevant sections of
  * the upstream `py_bind_algorithms.cpp` and `py_bind_models.cpp` files.
+ * Algorithm_pelt is further extended with min_size/jump parameters following
+ * the grid semantics of ruptures' pure Python Pelt (the other sources are
+ * verbatim).
  *
  * The Python-visible names (``models.ConstantNormal``, ``algorithms.PELT``,
  * ...) follow the upstream binding names; the C++ class names are left
@@ -84,8 +87,12 @@ void init_algorithms(py::module_ &algorithms) {
     // Bind Algorithm_pelt class
     py::class_<Algorithm_pelt, Algorithm_Base>(algorithms, "PELT"
     ,"PELT algorithm for changepoint detection with inequality based pruning.")
-        .def(py::init<Model_Base&>()
-            ,"Constructor that takes a reference to a Model_Base object."
+        .def(py::init<Model_Base&, arma::uword, arma::uword>()
+            ,"Constructor that takes a reference to a Model_Base object, "
+            "the minimum segment length (min_size) and the step between "
+            "candidate change points (jump); defaults reproduce the "
+            "single-argument behaviour."
+            , py::arg("model"), py::arg("min_size") = 1, py::arg("jump") = 1
             , py::keep_alive<1, 2>()
         )
         .def("predict", py::overload_cast<double>(&Algorithm_pelt::predict)

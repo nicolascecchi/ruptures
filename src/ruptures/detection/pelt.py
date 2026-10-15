@@ -23,10 +23,10 @@ class Pelt(BaseEstimator):
     For a given model and penalty level, computes the segmentation which
     minimizes the constrained sum of approximation errors.
 
-    For a positive penalty, ``min_size`` and ``jump`` both equal to 1
-    and the built-in L2 cost, the segmentation is delegated to the
-    compiled C++ backend ``ruptures._core`` (imported from the ``biblio-
-    these`` project), which returns the same breakpoints much faster.
+    For a positive penalty and the built-in L2 cost, the segmentation is
+    delegated to the compiled C++ backend ``ruptures._core`` (imported
+    from the ``biblio-these`` project), which returns the same
+    breakpoints much faster for every valid ``min_size`` and ``jump``.
     Every other configuration, or an unbuilt backend, uses the Python
     implementation below.
     """
@@ -63,18 +63,19 @@ class Pelt(BaseEstimator):
     def _use_compiled(self) -> bool:
         """Whether this configuration is handled by the compiled backend.
 
-        The compiled implementation is the textbook PELT algorithm: every
-        index is a candidate change point (``jump == 1``) and no segment is
-        excluded (``min_size == 1``). It only knows the constant-normal cost,
-        so a built-in ``CostL2`` cost is required: subclasses or other
-        cost classes use the Python implementation, even when they happen to
-        be named ``"l2"``.
+        The compiled implementation scans the change points on the
+        ``jump`` grid and enforces the minimum segment length
+        ``min_size``, exactly like the Python implementation, so every
+        valid ``min_size``/``jump`` combination is delegated. It only
+        knows the constant-normal cost, so a built-in ``CostL2`` cost is
+        required: subclasses or other cost classes use the Python
+        implementation, even when they happen to be named ``"l2"``.
         """
         return (
             _core is not None
             and type(self.cost) is CostL2
-            and self.min_size == 1
-            and self.jump == 1
+            and self.min_size >= 1
+            and self.jump >= 1
         )
 
     def _seg(self, pen: float) -> dict[tuple[int, int], float]:
@@ -139,7 +140,7 @@ class Pelt(BaseEstimator):
         # it is normalised here into what the compiled model expects.
         signal = np.ascontiguousarray(self.cost.signal, dtype=np.float64)
         model = _core.models.ConstantNormal(signal)
-        algorithm = _core.algorithms.PELT(model)
+        algorithm = _core.algorithms.PELT(model, min_size=self.min_size, jump=self.jump)
         algorithm.predict(float(pen))
         return np.asarray(algorithm.get_changepoints(), dtype=int).ravel().tolist()
 
