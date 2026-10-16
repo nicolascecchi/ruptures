@@ -66,6 +66,12 @@ def pybind_ext_modules():
                 "cpp/Models/Model_linear.cpp",
                 "cpp/Models/Model_linear_continuous.cpp",
                 "cpp/Models/Model_meanvar.cpp",
+                "cpp/Models/Model_l1.cpp",
+                "cpp/Models/Model_rbf.cpp",
+                "cpp/Models/Model_cosine.cpp",
+                "cpp/Models/Model_ar.cpp",
+                "cpp/Models/Model_mahalanobis.cpp",
+                "cpp/Models/Model_clinear.cpp",
             ],
             # carma bridges NumPy and Armadillo, so the NumPy headers are needed.
             include_dirs=CPP_INCLUDE_DIRS + [numpy.get_include()],

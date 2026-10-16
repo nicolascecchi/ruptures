@@ -7,6 +7,12 @@
 #include <armadillo>
 // IMPORTANT NOTICE:
 // FOR THE MOMENT WE LEAVE THE FIT() METHODS UNUSED TO MAKE THE CODE AS SIMPLE AS POSSIBLE
+// NOTE: compute_centered_ranks (below) was modified to average the ranks of
+// tied values, like scipy's rankdata does for Python's CostRank. Without
+// this, tied columns (e.g. a constant signal) get an arbitrary permutation of
+// the ranks and their cost becomes very negative instead of 0, so PELT
+// returns spurious change points. Re-syncing this file verbatim from
+// biblio-these/src/ would revert the fix.
 
 
 Model_constant_rank::Model_constant_rank(const arma::Mat<double>& data): 
@@ -37,11 +43,25 @@ double Model_constant_rank::compute_segment_cost(arma::uword start, arma::uword 
 
 const arma::Mat<double> Model_constant_rank::compute_centered_ranks(const arma::Mat<double>& data) {
     arma::Mat<double> tmp_centered_ranks(data.n_rows, data.n_cols, arma::fill::zeros);
-    // Compute ranks for each column
+    // Compute ranks for each column; tied values take the average of their
+    // ranks (scipy rankdata's default), which is the same as an ordinal rank
+    // when values are all distinct.
     for (arma::uword d = 0; d < ndims; ++d) {
         arma::uvec sorted_indices = arma::sort_index(data.col(d));
-        for (arma::uword i = 0; i < sorted_indices.n_elem; i++) {
-            tmp_centered_ranks(sorted_indices(i), d) = i + 1.; 
+        arma::uword i = 0;
+        while (i < sorted_indices.n_elem) {
+            // find the end j of the run of tied values
+            arma::uword j = i;
+            while (j + 1 < sorted_indices.n_elem &&
+                   data(sorted_indices(j + 1), d) == data(sorted_indices(i), d)) {
+                ++j;
+            }
+            // average of the 1-based ranks i+1, ..., j+1
+            double average_rank = (i + j + 2.0) / 2.0;
+            for (arma::uword k = i; k <= j; ++k) {
+                tmp_centered_ranks(sorted_indices(k), d) = average_rank;
+            }
+            i = j + 1;
         }
     }
     // Centering ranks
