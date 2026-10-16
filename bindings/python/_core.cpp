@@ -6,7 +6,9 @@
  * the upstream `py_bind_algorithms.cpp` and `py_bind_models.cpp` files.
  * Algorithm_pelt is further extended with min_size/jump parameters following
  * the grid semantics of ruptures' pure Python Pelt; the model classes are
- * copied verbatim. Upstream's Model_Factory.h and Model_splineop.h (and its
+ * copied verbatim, except the ones implemented here (l1, rbf, cosine, ar,
+ * mahalanobis, clinear) for parity with ruptures' Python cost functions.
+ * Upstream's Model_Factory.h and Model_splineop.h (and its
  * Functions/Faulhaber dependency, which Model_splineop.h includes) are not
  * synced yet: the factory includes Model_splineop.h, so both are left for a
  * dedicated splineop pass.
@@ -36,6 +38,12 @@
 #include "Models/Model_linear.h"
 #include "Models/Model_linear_continuous.h"
 #include "Models/Model_meanvar.h"
+#include "Models/Model_l1.h"
+#include "Models/Model_rbf.h"
+#include "Models/Model_cosine.h"
+#include "Models/Model_ar.h"
+#include "Models/Model_mahalanobis.h"
+#include "Models/Model_clinear.h"
 
 namespace py = pybind11;
 
@@ -182,6 +190,89 @@ void init_models(py::module_ &models) {
             ,py::arg("data")
         )
         .def("compute_segment_cost", &Model_meanvar::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_l1 class
+    py::class_<Model_l1, Model_Base>(models
+        , "CostL1"
+        , "Model for detecting changes with the least absolute deviation cost.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_l1::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_rbf class
+    py::class_<Model_rbf, Model_Base>(models
+        , "CostRbf"
+        , "Model for detecting changes with a Gaussian-kernel (RBF) cost.")
+        .def(py::init<const arma::Mat<double>&, double>()
+            ,"Constructor that takes a 2D numpy array and the RBF width "
+            "gamma (resolving the median heuristic is left to Python's "
+            "CostRbf.fit())."
+            ,py::arg("data"), py::arg("gamma")
+        )
+        .def("compute_segment_cost", &Model_rbf::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_cosine class
+    py::class_<Model_cosine, Model_Base>(models
+        , "CostCosine"
+        , "Model for detecting changes with a cosine-similarity kernel cost.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_cosine::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_ar class
+    py::class_<Model_ar, Model_Base>(models
+        , "CostAR"
+        , "Model for detecting changes in autoregressive coefficients.")
+        .def(py::init<const arma::Mat<double>&, const arma::Mat<double>&>()
+            ,"Constructor that takes the signal and the lagged covariate "
+            "matrix (with intercept) prepared by Python's CostAR.fit()."
+            ,py::arg("signal"), py::arg("covar")
+        )
+        .def("compute_segment_cost", &Model_ar::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_mahalanobis class
+    py::class_<Model_mahalanobis, Model_Base>(models
+        , "CostMl"
+        , "Model for detecting changes with a Mahalanobis-type kernel cost.")
+        .def(py::init<const arma::Mat<double>&, const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array and the metric matrix "
+            "prepared by Python's CostMl.fit()."
+            ,py::arg("data"), py::arg("metric")
+        )
+        .def("compute_segment_cost", &Model_mahalanobis::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_clinear class
+    py::class_<Model_clinear, Model_Base>(models
+        , "CostCLinear"
+        , "Model for detecting changes with Python CostCLinear's "
+        "continuity-constrained linear cost.")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_clinear::compute_segment_cost
             , "Compute the cost of a segment defined by start and end indices"
             , py::arg("start"), py::arg("end")
     );
