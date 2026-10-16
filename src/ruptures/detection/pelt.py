@@ -6,7 +6,9 @@ from typing_extensions import Self
 
 import numpy as np
 from numpy.typing import NDArray
-from ruptures.costs import CostL2, cost_factory
+from ruptures.costs import (CostAR, CostCLinear, CostCosine, CostL1, CostL2,
+                            CostLinear, CostMl, CostRbf, CostRank,
+                            cost_factory)
 from ruptures.base import BaseCost, BaseEstimator
 from ruptures.exceptions import BadSegmentationParameters
 from ruptures.utils import sanity_check
@@ -17,18 +19,49 @@ except ImportError:  # compiled backend not built; the Python path is used.
     _core = None
 
 
+# Builders adapt a fitted Python cost into its compiled counterpart. A None
+# builder result means the Python implementation is used. All cost classes
+# are exact-type keys: a custom cost (or a subclass of one of these) never
+# dispatches to the compiled backend.
+#
+# model="normal" is NOT dispatched: Python's CostNormal and the compiled
+# CostMeanVar differ by ~n*log(n/(n-1)) per segment, which changes the
+# segmentation at some penalty levels, and no compiled model matches
+# CostNormal's semantics (an exact-parity one is still to be decided).
+_COMPILED_COST_BUILDERS = {
+    CostL2: lambda cost: _core.models.ConstantNormal(np.ascontiguousarray(cost.signal, dtype=np.float64)),
+    CostL1: lambda cost: _core.models.CostL1(np.ascontiguousarray(cost.signal, dtype=np.float64)),
+    CostRbf: lambda cost: _core.models.CostRbf(np.ascontiguousarray(cost.signal, dtype=np.float64), float(cost.gamma)),
+    CostCosine: lambda cost: _core.models.CostCosine(np.ascontiguousarray(cost.signal, dtype=np.float64)),
+    # CostAR.error() regresses the padded signal (cost.signal, mutated by
+    # fit()) on the lagged covariates (cost.covar), so both are passed.
+    CostAR: lambda cost: _core.models.CostAR(
+        np.ascontiguousarray(cost.signal, dtype=np.float64),
+        np.ascontiguousarray(cost.covar, dtype=np.float64)),
+    CostMl: lambda cost: _core.models.CostMl(
+        np.ascontiguousarray(cost.signal, dtype=np.float64),
+        np.ascontiguousarray(cost.metric, dtype=np.float64)),
+    CostCLinear: lambda cost: _core.models.CostCLinear(np.ascontiguousarray(cost.signal, dtype=np.float64)),
+    # compiled CostLinear expects observed variable and covariates in one matrix
+    CostLinear: lambda cost: _core.models.CostLinear(
+        np.ascontiguousarray(np.column_stack([cost.signal, cost.covar]), dtype=np.float64)),
+    CostRank: lambda cost: _core.models.ConstantRank(np.ascontiguousarray(cost.signal, dtype=np.float64)),
+} if _core is not None else {}
+
+
 class Pelt(BaseEstimator):
     """Penalized change point detection.
 
     For a given model and penalty level, computes the segmentation which
     minimizes the constrained sum of approximation errors.
 
-    For a positive penalty and the built-in L2 cost, the segmentation is
-    delegated to the compiled C++ backend ``ruptures._core`` (imported
-    from the ``biblio-these`` project), which returns the same
-    breakpoints much faster for every valid ``min_size`` and ``jump``.
-    Every other configuration, or an unbuilt backend, uses the Python
-    implementation below.
+    For a positive penalty and a built-in cost with a compiled
+    counterpart, the segmentation is delegated to the compiled C++
+    backend ``ruptures._core`` (imported from the ``biblio-these``
+    project), which returns the same breakpoints much faster for every
+    valid ``min_size`` and ``jump``. Every other configuration (custom
+    cost, subclass, unbuilt backend) uses the Python implementation
+    below.
     """
 
     def __init__(
@@ -42,7 +75,11 @@ class Pelt(BaseEstimator):
         """Initialize a Pelt instance.
 
         Args:
-            model (str, optional): segment model, ["l1", "l2", "rbf"]. Not used if ``'custom_cost'`` is not None.
+            model (str, optional): segment model, ["l1", "l2", "linear", "clinear",
+                "normal", "rank", "rbf", "cosine", "ar", "mahalanobis"].
+                Models that have a compiled counterpart are dispatched to the
+                compiled backend when it is built. Not used if ``'custom_cost'``
+                is not None.
             custom_cost (BaseCost, optional): custom cost function. Defaults to None.
             min_size (int, optional): minimum segment length.
             jump (int, optional): subsample (one every *jump* points).
@@ -59,6 +96,17 @@ class Pelt(BaseEstimator):
         self.jump = jump
         self.n_samples = None
 
+    def _compiled_model(self):
+        """Adapt the fitted cost into its compiled counterpart, or None.
+
+        Returns None when the Python implementation must be used (no
+        compiled backend, non-builtin cost, invalid segmentation
+        parameters, or a builder gate failing).
+        """
+        if not self._use_compiled:
+            return None
+        return _COMPILED_COST_BUILDERS[type(self.cost)](self.cost)
+
     @property
     def _use_compiled(self) -> bool:
         """Whether this configuration is handled by the compiled backend.
@@ -66,14 +114,14 @@ class Pelt(BaseEstimator):
         The compiled implementation scans the change points on the
         ``jump`` grid and enforces the minimum segment length
         ``min_size``, exactly like the Python implementation, so every
-        valid ``min_size``/``jump`` combination is delegated. It only
-        knows the constant-normal cost, so a built-in ``CostL2`` cost is
-        required: subclasses or other cost classes use the Python
-        implementation, even when they happen to be named ``"l2"``.
+        valid ``min_size``/``jump`` combination is delegated. Only exact
+        built-in cost types are delegated: subclasses or custom cost
+        classes use the Python implementation, even when they happen to
+        be named like a built-in one.
         """
         return (
             _core is not None
-            and type(self.cost) is CostL2
+            and type(self.cost) in _COMPILED_COST_BUILDERS
             and self.min_size >= 1
             and self.jump >= 1
         )
@@ -127,19 +175,19 @@ class Pelt(BaseEstimator):
         del best_partition[(0, 0)]
         return best_partition
 
-    def _compiled_bkps(self, pen: float) -> list[int]:
+    def _compiled_bkps(self, model, pen: float) -> list[int]:
         """Return the optimal breakpoints, computed by the compiled backend.
 
         Args:
+            model: compiled model adapted from the fitted cost (see ``_compiled_model``).
             pen (float): penalty value (>0)
 
         Returns:
             list: sorted list of breakpoints
         """
-        # CostL2.fit() stores the signal as a 2D array but keeps its dtype, so
-        # it is normalised here into what the compiled model expects.
-        signal = np.ascontiguousarray(self.cost.signal, dtype=np.float64)
-        model = _core.models.ConstantNormal(signal)
+        # The compiled implementation scans the change points on the same
+        # jump grid and enforces the same min_size, hence the identical
+        # breakpoints for every valid configuration.
         algorithm = _core.algorithms.PELT(model, min_size=self.min_size, jump=self.jump)
         algorithm.predict(float(pen))
         return np.asarray(algorithm.get_changepoints(), dtype=int).ravel().tolist()
@@ -187,8 +235,11 @@ class Pelt(BaseEstimator):
         ):
             raise BadSegmentationParameters
 
-        if self._use_compiled and pen > 0:
-            return self._compiled_bkps(pen)
+        # the model is built once: building can pay a non-trivial price
+        # (e.g. an O(nobs^2) Gram matrix for rbf/cosine).
+        model = self._compiled_model() if self._use_compiled and pen > 0 else None
+        if model is not None:
+            return self._compiled_bkps(model, pen)
 
         partition = self._seg(pen)
         bkps = sorted(e for s, e in partition.keys())

@@ -26,15 +26,16 @@ def signal_bkps_5D():
     return signal, bkps
 
 
-def pure_python_bkps(signal, pen, min_size=1, jump=1):
-    """Breakpoints of ``Pelt(model="l2", min_size, jump)``, Python only.
+def pure_python_bkps(signal, pen, model="l2", params=None, min_size=1, jump=1):
+    """Breakpoints of ``Pelt(model, params, min_size, jump)``, Python only.
 
-    ``Pelt`` delegates that configuration to the compiled backend, so
-    the module global is disabled for the duration of the call to
-    exercise the reference implementation instead.
+    ``Pelt`` delegates built-in costs to the compiled backend, so the
+    module global is disabled for the duration of the call to exercise
+    the reference implementation instead.
     """
     with mock.patch("ruptures.detection.pelt._core", None):
-        return Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, pen)
+        pelt = Pelt(model=model, params=params, min_size=min_size, jump=jump)
+        return pelt.fit_predict(signal, pen)
 
 
 def test_core_importable():
@@ -54,9 +55,9 @@ def test_pelt_delegates_to_compiled_backend(
     pens = []
     compiled_bkps = Pelt._compiled_bkps
 
-    def spy(self, pen):
+    def spy(self, model, pen):
         pens.append(pen)
-        return compiled_bkps(self, pen)
+        return compiled_bkps(self, model, pen)
 
     monkeypatch.setattr(Pelt, "_compiled_bkps", spy)
     Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(signal, 50.0)
@@ -65,10 +66,7 @@ def test_pelt_delegates_to_compiled_backend(
 
 @pytest.mark.parametrize(
     "kwargs",
-    [
-        {"model": "l1", "min_size": 1, "jump": 1},
-        {"model": "l2", "jump": -1},  # an invalid grid stays on the Python path
-    ],
+    [{"model": "l2", "jump": -1}],  # an invalid grid stays on the Python path
 )
 def test_pelt_does_not_delegate(kwargs):
     assert not Pelt(**kwargs)._use_compiled
@@ -83,12 +81,19 @@ def test_pelt_does_not_delegate_for_a_cost_subclass():
     assert not Pelt(custom_cost=MyCost(), min_size=1, jump=1)._use_compiled
 
 
-@pytest.mark.parametrize("pen", [-1.0, 0.0])
-def test_non_positive_penalty_stays_on_python_path(pen, signal_bkps_1D):
-    """The compiled classical pruning rule is only used for pen > 0."""
+@pytest.mark.parametrize(
+    "model,pen", [("l2", -1.0), ("l2", 0.0), ("l1", 0.0)]
+)
+def test_non_positive_penalty_stays_on_python_path(model, pen, signal_bkps_1D):
+    """The compiled classical pruning rule is only used for pen > 0.
+
+    l1 has no pen=-1.0 case: a negative penalty empties the admissible
+    set of the Python PELT recursion, which crashes ``_seg`` for every
+    cost with ``min_size >= 2`` at ``jump=1`` (pre-existing behaviour,
+    unrelated to the dispatch)."""
     signal, _ = signal_bkps_1D
     with mock.patch.object(Pelt, "_compiled_bkps") as spy:
-        Pelt(model="l2", min_size=1, jump=1).fit_predict(signal, pen)
+        Pelt(model=model, min_size=1, jump=1).fit_predict(signal, pen)
     spy.assert_not_called()
 
 
@@ -191,13 +196,14 @@ def test_reusable_after_fit(min_size, jump, signal_bkps_5D):
     assert first == second
 
 
+@pytest.mark.parametrize("model", ["l2", "l1", "rbf"])
 @pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 3)])
-def test_accepts_non_contiguous_and_non_float(min_size, jump, signal_bkps_5D):
+def test_accepts_non_contiguous_and_non_float(min_size, jump, model, signal_bkps_5D):
     signal, _ = signal_bkps_5D
     view = np.asarray(signal, dtype=np.int64)[::1, ::2]
-    got = Pelt(model="l2", min_size=min_size, jump=jump).fit_predict(view, 50.0)
+    got = Pelt(model=model, min_size=min_size, jump=jump).fit_predict(view, 50.0)
     assert got == pure_python_bkps(
-        view.astype(float), 50.0, min_size=min_size, jump=jump
+        view.astype(float), 50.0, model=model, min_size=min_size, jump=jump
     )
 
 
@@ -210,3 +216,158 @@ def test_binding_rejects_invalid_parameters(signal_bkps_1D):
         _core.algorithms.PELT(model, min_size=0)
     with pytest.raises(ValueError):
         _core.algorithms.PELT(model, jump=0)
+
+
+# ---------------------------------------------------------------------------
+# Built-in costs dispatched to the compiled backend
+# (see _COMPILED_COST_BUILDERS in ruptures.detection.pelt)
+# ---------------------------------------------------------------------------
+
+DISPATCHED_MODELS = [
+    "l1", "l2", "linear", "clinear", "rank", "rbf", "cosine", "ar",
+    "mahalanobis",
+]
+
+
+@pytest.mark.parametrize("model", DISPATCHED_MODELS)
+def test_pelt_delegates_every_builtin_model(model):
+    """Every built-in model string with a compiled counterpart dispatches."""
+    assert Pelt(model=model)._use_compiled
+
+
+def test_normal_does_not_delegate():
+    """model="normal" stays on the Python path: no compiled model matches
+    CostNormal's semantics. The compiled CostMeanVar differs by
+    ~n*log(n/(n-1)) per segment, which was observed to change the
+    segmentation at some penalty levels, so it is not a drop-in."""
+    assert not Pelt(model="normal")._use_compiled
+
+
+def _assert_cost_matches_python(signal, model, params, segments):
+    """The compiled model adapted from a fitted cost matches its Python
+    error() values on the given segments."""
+    pelt = Pelt(model=model, params=params, min_size=1, jump=1).fit(signal)
+    compiled = pelt._compiled_model()
+    for start, end in segments:
+        if end - start < pelt.cost.min_size:
+            continue
+        assert compiled.compute_segment_cost(start, end) == pytest.approx(
+            pelt.cost.error(start, end), rel=1e-6, abs=1e-8
+        )
+
+
+SEGMENTS_500 = [(0, 1), (0, 10), (17, 250), (100, 499), (0, 500), (243, 500)]
+
+
+@pytest.mark.parametrize(
+    "model,params",
+    [
+        ("l1", {}),
+        ("rbf", {}),  # gamma is resolved by the median heuristic in fit()
+        ("rbf", {"gamma": 0.02}),
+        ("cosine", {}),
+        ("clinear", {}),
+        ("ar", {"order": 1}),
+        ("ar", {"order": 4}),
+    ],
+)
+def test_builtin_cost_matches_python_1D(signal_bkps_1D, model, params):
+    signal, _ = signal_bkps_1D
+    _assert_cost_matches_python(signal, model, params, SEGMENTS_500)
+
+
+@pytest.mark.parametrize("model", ["mahalanobis", "rank"])
+def test_builtin_cost_matches_python_5D(signal_bkps_5D, model):
+    signal, _ = signal_bkps_5D
+    _assert_cost_matches_python(signal, model, {}, SEGMENTS_500)
+
+
+def test_rank_cost_matches_python_on_tied_values():
+    """scipy rankdata averages tied ranks, so a constant column has exactly
+    0 cost everywhere; the compiled rank cost must do the same, otherwise
+    PELT splits tied segments into spurious change points."""
+    rng = np.random.default_rng(0)
+    signal = np.round(rng.normal(size=(200, 2)))  # many tied values
+    segments = [(0, 1), (0, 10), (17, 150), (100, 200), (0, 200), (60, 133)]
+    _assert_cost_matches_python(signal, "rank", {}, segments)
+    assert Pelt(model="rank").fit_predict(np.zeros(200).reshape(-1, 1), 1.0) == [
+        200
+    ]
+
+
+@pytest.fixture(scope="module")
+def linear_signal():
+    """2-column signal whose observed variable is regressed on a covariate,
+    with a slope change half-way."""
+    covariate = np.random.default_rng(11).normal(size=(500, 1))
+    gain = np.r_[np.full(250, 2.0), np.full(250, -1.0)]
+    observed = gain * covariate
+    observed += np.random.default_rng(12).normal(scale=0.1, size=(500, 1))
+    return np.column_stack([observed, covariate])
+
+
+def test_builtin_cost_matches_python_linear(linear_signal):
+    _assert_cost_matches_python(
+        linear_signal, "linear", {}, [(0, 2), (0, 10), (17, 250), (0, 500)]
+    )
+
+
+# penalty levels chosen so the segmentations are non-trivial on the fixtures
+@pytest.mark.parametrize("min_size,jump", MIN_SIZE_JUMP)
+@pytest.mark.parametrize("pen", [10.0, 50.0, 200.0])
+def test_matches_pure_python_pelt_l1_configs(signal_bkps_1D, min_size, jump, pen):
+    signal, _ = signal_bkps_1D
+    got = Pelt(model="l1", min_size=min_size, jump=jump).fit_predict(signal, pen)
+    assert got == pure_python_bkps(
+        signal, pen, model="l1", min_size=min_size, jump=jump
+    )
+
+
+@pytest.mark.parametrize("min_size,jump", [(1, 1), (2, 5), (7, 3), (12, 5)])
+@pytest.mark.parametrize(
+    "model,params,pen",
+    [
+        ("rbf", {}, 2.0),
+        ("cosine", {}, 2.0),
+        ("clinear", {}, 50.0),
+        ("ar", {"order": 4}, 100.0),
+    ],
+)
+def test_matches_pure_python_pelt_models_1D(
+    signal_bkps_1D, model, params, pen, min_size, jump
+):
+    """Compiled and pure-Python PELT return the same breakpoints for the
+    other built-in costs."""
+    signal, _ = signal_bkps_1D
+    got = Pelt(
+        model=model, params=params, min_size=min_size, jump=jump
+    ).fit_predict(signal, pen)
+    assert got == pure_python_bkps(
+        signal, pen, model=model, params=params, min_size=min_size, jump=jump
+    )
+
+
+@pytest.mark.parametrize("min_size,jump", [(2, 5), (7, 3)])
+@pytest.mark.parametrize("model", ["mahalanobis", "rank"])
+def test_matches_pure_python_pelt_models_5D(signal_bkps_5D, model, min_size, jump):
+    signal, _ = signal_bkps_5D
+    got = Pelt(model=model, min_size=min_size, jump=jump).fit_predict(signal, 5.0)
+    assert got == pure_python_bkps(
+        signal, 5.0, model=model, min_size=min_size, jump=jump
+    )
+
+
+def test_matches_pure_python_pelt_linear(linear_signal):
+    got = Pelt(model="linear", min_size=5, jump=3).fit_predict(linear_signal, 1.0)
+    assert got == pure_python_bkps(
+        linear_signal, 1.0, model="linear", min_size=5, jump=3
+    )
+
+
+@pytest.mark.parametrize(
+    "model,params,pen", [("l1", {}, 15.0), ("rbf", {}, 2.0), ("ar", {"order": 1}, 100.0)]
+)
+def test_reusable_after_fit_built_in_models(signal_bkps_1D, model, params, pen):
+    signal, _ = signal_bkps_1D
+    algo = Pelt(model=model, params=params).fit(signal)
+    assert algo.predict(pen) == algo.predict(pen)
