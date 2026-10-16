@@ -23,7 +23,7 @@ Model_linear_continuous::Model_linear_continuous(const arma::Mat<double>& data):
 // y = {y_1, y_2,..., y_nobs} and not {y_0, y_1,..., y_{nobs-1}}.
 double Model_linear_continuous::compute_segment_cost(arma::uword start, arma::uword end) {
     sub_y = y.subvec(start, end-1);
-    slope = (sub_y(end-1) - sub_y(start)) / (end - start);
+    slope = (y(end-1) - y(start)) / (end - start);
     intercept = y(start);
     segment_prediction = intercept + slope * arma::regspace(0, end - start - 1);
     residuals = sub_y -  segment_prediction;
