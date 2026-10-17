@@ -14,9 +14,14 @@ Derived from Model_Base class, it will have an compute_segment_cost() member fun
 * @class Model_cosine
 * @brief Model_cosine models signals with a cosine-similarity kernel cost.
 *
-* The Gram matrix dot(y_i, y_j) / (|y_i| |y_j|) is computed once, like the
-* cached Python CostCosine.gram; memory is O(nobs^2), same as Python. Rows
-* with zero norm give NaN entries, like scipy's pdist cosine distances.
+* No Gram matrix is needed. The cosine Gram has a zero diagonal and exact
+* cosines off it, so the sum of its entries over a segment is
+* ||sum of the unit rows||^2 - L, which makes the cost 1 - ||sum||^2 / L: the
+* same number as the Python CostCosine's diagonal-minus-block-sum, at O(nobs)
+* memory and O(n_features) per call instead of O(nobs^2) and O(L^2).
+* Rows with zero norm give NaN in Python, for the segments that contain them;
+* zero_prefix keeps that behaviour instead of letting NaN spread through the
+* cumulative sums.
 *
 */
 class Model_cosine : public Model_Base {
@@ -29,9 +34,10 @@ class Model_cosine : public Model_Base {
         // by being member variables, we avoid re-declaring them at each
         // compute_segment_cost call
         arma::Mat<double> y;
-        arma::Mat<double> gram;
+        arma::Mat<double> unit;         /**< y with unit-norm rows */
+        arma::Mat<double> unit_prefix;  /**< unit_prefix.row(i) = sum of unit rows before i */
+        arma::Col<double> zero_prefix;  /**< zero_prefix(i) = number of zero-norm rows before i */
 
-        arma::Mat<double> sub_gram;
         double segment_length;
         double segment_cost;
     };
