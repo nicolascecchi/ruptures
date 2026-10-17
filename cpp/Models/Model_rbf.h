@@ -33,7 +33,6 @@ class Model_rbf : public Model_Base {
         double gamma;
         arma::Mat<double> gram;
 
-        arma::Mat<double> sub_gram;
         double segment_length;
         double segment_cost;
     };

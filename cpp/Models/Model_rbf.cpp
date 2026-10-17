@@ -32,9 +32,12 @@ Model_rbf::Model_rbf(const arma::Mat<double>& data, double gamma):
 
 // Cost of rows [start, end) = Python CostRbf.error (costrbf.py):
 // sum of the Gram diagonal minus the Gram sum over the segment.
+// The block is reduced through a subview: submat() would copy it (L^2 doubles
+// per call), where Python slices a view of its own Gram.
 double Model_rbf::compute_segment_cost(arma::uword start, arma::uword end) {
     segment_length = end - start;
-    sub_gram = gram.submat(start, start, end-1, end-1);
-    segment_cost = arma::accu(sub_gram.diag()) - arma::accu(sub_gram) / segment_length;
+    const arma::span block(start, end - 1);
+    segment_cost = arma::accu(gram(block, block).diag())
+                    - arma::accu(gram(block, block)) / segment_length;
     return segment_cost;
 }
