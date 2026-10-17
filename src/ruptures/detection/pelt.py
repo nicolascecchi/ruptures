@@ -7,7 +7,7 @@ from typing_extensions import Self
 import numpy as np
 from numpy.typing import NDArray
 from ruptures.costs import (CostAR, CostCLinear, CostCosine, CostL1, CostL2,
-                            CostLinear, CostMl, CostRbf, CostRank,
+                            CostLinear, CostMl, CostNormal, CostRbf, CostRank,
                             cost_factory)
 from ruptures.base import BaseCost, BaseEstimator
 from ruptures.exceptions import BadSegmentationParameters
@@ -24,10 +24,9 @@ except ImportError:  # compiled backend not built; the Python path is used.
 # are exact-type keys: a custom cost (or a subclass of one of these) never
 # dispatches to the compiled backend.
 #
-# model="normal" is NOT dispatched: Python's CostNormal and the compiled
-# CostMeanVar differ by ~n*log(n/(n-1)) per segment, which changes the
-# segmentation at some penalty levels, and no compiled model matches
-# CostNormal's semantics (an exact-parity one is still to be decided).
+# model="normal" only matches its compiled counterpart for the v1.1.5
+# behaviour (add_small_diag=True): the 1e-6 diagonal bias is baked into the
+# compiled model, so add_small_diag=False stays on the Python path.
 _COMPILED_COST_BUILDERS = {
     CostL2: lambda cost: _core.models.ConstantNormal(np.ascontiguousarray(cost.signal, dtype=np.float64)),
     CostL1: lambda cost: _core.models.CostL1(np.ascontiguousarray(cost.signal, dtype=np.float64)),
@@ -46,6 +45,10 @@ _COMPILED_COST_BUILDERS = {
     CostLinear: lambda cost: _core.models.CostLinear(
         np.ascontiguousarray(np.column_stack([cost.signal, cost.covar]), dtype=np.float64)),
     CostRank: lambda cost: _core.models.ConstantRank(np.ascontiguousarray(cost.signal, dtype=np.float64)),
+    CostNormal: lambda cost: (
+        _core.models.CostNormal(np.ascontiguousarray(cost.signal, dtype=np.float64))
+        if cost.add_small_diag is True else None
+    ),
 } if _core is not None else {}
 
 

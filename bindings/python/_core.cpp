@@ -37,13 +37,13 @@
 #include "Models/Model_constant_rank.h"
 #include "Models/Model_linear.h"
 #include "Models/Model_linear_continuous.h"
-#include "Models/Model_meanvar.h"
 #include "Models/Model_l1.h"
 #include "Models/Model_rbf.h"
 #include "Models/Model_cosine.h"
 #include "Models/Model_ar.h"
 #include "Models/Model_mahalanobis.h"
 #include "Models/Model_clinear.h"
+#include "Models/Model_normal.h"
 
 namespace py = pybind11;
 
@@ -181,19 +181,6 @@ void init_models(py::module_ &models) {
             , py::arg("start"), py::arg("end")
     );
 
-    // Bind Model_meanvar class
-    py::class_<Model_meanvar, Model_Base>(models
-        , "CostMeanVar"
-        , "Model for detecting changes in mean and variance with Gaussian noise.")
-        .def(py::init<const arma::Mat<double>&>()
-            ,"Constructor that takes a 2D numpy array as input data"
-            ,py::arg("data")
-        )
-        .def("compute_segment_cost", &Model_meanvar::compute_segment_cost
-            , "Compute the cost of a segment defined by start and end indices"
-            , py::arg("start"), py::arg("end")
-    );
-
     // Bind Model_l1 class
     py::class_<Model_l1, Model_Base>(models
         , "CostL1"
@@ -273,6 +260,21 @@ void init_models(py::module_ &models) {
             ,py::arg("data")
         )
         .def("compute_segment_cost", &Model_clinear::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_normal class
+    py::class_<Model_normal, Model_Base>(models
+        , "CostNormal"
+        , "Model for detecting changes in the distribution of a Gaussian "
+        "signal: the segment log-likelihood cost, with CostNormal's v1.1.5 "
+        "diagonal bias (costs/costnormal.py, add_small_diag=True).")
+        .def(py::init<const arma::Mat<double>&>()
+            ,"Constructor that takes a 2D numpy array as input data"
+            ,py::arg("data")
+        )
+        .def("compute_segment_cost", &Model_normal::compute_segment_cost
             , "Compute the cost of a segment defined by start and end indices"
             , py::arg("start"), py::arg("end")
     );

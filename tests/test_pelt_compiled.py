@@ -224,7 +224,7 @@ def test_binding_rejects_invalid_parameters(signal_bkps_1D):
 # ---------------------------------------------------------------------------
 
 DISPATCHED_MODELS = [
-    "l1", "l2", "linear", "clinear", "rank", "rbf", "cosine", "ar",
+    "l1", "l2", "linear", "clinear", "normal", "rank", "rbf", "cosine", "ar",
     "mahalanobis",
 ]
 
@@ -235,12 +235,17 @@ def test_pelt_delegates_every_builtin_model(model):
     assert Pelt(model=model)._use_compiled
 
 
-def test_normal_does_not_delegate():
-    """model="normal" stays on the Python path: no compiled model matches
-    CostNormal's semantics. The compiled CostMeanVar differs by
-    ~n*log(n/(n-1)) per segment, which was observed to change the
-    segmentation at some penalty levels, so it is not a drop-in."""
-    assert not Pelt(model="normal")._use_compiled
+def test_normal_delegates_only_with_small_diag():
+    """model="normal" is delegated only for the default add_small_diag=True
+    behaviour: the compiled backend bakes in the 1e-6 diagonal bias
+    (v1.1.5 semantics, PR#198); add_small_diag=False stays on Python."""
+    pelt = Pelt(model="normal").fit(np.zeros(10).reshape(-1, 1))
+    assert pelt._use_compiled
+    assert pelt._compiled_model() is not None
+
+    pelt = Pelt(model="normal", params={"add_small_diag": False})
+    pelt.fit(np.zeros(10).reshape(-1, 1))
+    assert pelt._compiled_model() is None
 
 
 def _assert_cost_matches_python(signal, model, params, segments):
@@ -269,6 +274,7 @@ SEGMENTS_500 = [(0, 1), (0, 10), (17, 250), (100, 499), (0, 500), (243, 500)]
         ("clinear", {}),
         ("ar", {"order": 1}),
         ("ar", {"order": 4}),
+        ("normal", {}),
     ],
 )
 def test_builtin_cost_matches_python_1D(signal_bkps_1D, model, params):
@@ -276,7 +282,7 @@ def test_builtin_cost_matches_python_1D(signal_bkps_1D, model, params):
     _assert_cost_matches_python(signal, model, params, SEGMENTS_500)
 
 
-@pytest.mark.parametrize("model", ["mahalanobis", "rank"])
+@pytest.mark.parametrize("model", ["mahalanobis", "rank", "normal"])
 def test_builtin_cost_matches_python_5D(signal_bkps_5D, model):
     signal, _ = signal_bkps_5D
     _assert_cost_matches_python(signal, model, {}, SEGMENTS_500)
@@ -331,6 +337,7 @@ def test_matches_pure_python_pelt_l1_configs(signal_bkps_1D, min_size, jump, pen
         ("cosine", {}, 2.0),
         ("clinear", {}, 50.0),
         ("ar", {"order": 4}, 100.0),
+        ("normal", {}, 1.0),
     ],
 )
 def test_matches_pure_python_pelt_models_1D(
@@ -357,6 +364,19 @@ def test_matches_pure_python_pelt_models_5D(signal_bkps_5D, model, min_size, jum
     )
 
 
+@pytest.mark.parametrize("min_size,jump", [(2, 5), (7, 3)])
+def test_matches_pure_python_pelt_normal_5D(signal_bkps_5D, min_size, jump):
+    """5-D normal segments aggressively (every split gains likelihood), so
+    only a large penalty keeps the segmentation non-trivial."""
+    signal, _ = signal_bkps_5D
+    got = Pelt(model="normal", min_size=min_size, jump=jump).fit_predict(
+        signal, 100.0
+    )
+    assert got == pure_python_bkps(
+        signal, 100.0, model="normal", min_size=min_size, jump=jump
+    )
+
+
 def test_matches_pure_python_pelt_linear(linear_signal):
     got = Pelt(model="linear", min_size=5, jump=3).fit_predict(linear_signal, 1.0)
     assert got == pure_python_bkps(
@@ -371,3 +391,38 @@ def test_reusable_after_fit_built_in_models(signal_bkps_1D, model, params, pen):
     signal, _ = signal_bkps_1D
     algo = Pelt(model=model, params=params).fit(signal)
     assert algo.predict(pen) == algo.predict(pen)
+
+
+@pytest.fixture(scope="module")
+def variance_break_signal():
+    """Two Gaussian stretches whose variance changes half-way, with no mean
+    change: only a variance-sensitive cost such as normal detects it."""
+    rng = np.random.default_rng(3)
+    return np.r_[
+        rng.normal(scale=0.2, size=250), rng.normal(scale=2.0, size=250)
+    ].reshape(-1, 1)
+
+
+@pytest.mark.parametrize(
+    "min_size,jump,pen",
+    [(2, 5, 1.0), (2, 5, 5.0), (7, 3, 5.0), (12, 5, 2.0)],
+)
+def test_matches_pure_python_pelt_normal_varbreak(
+    min_size, jump, pen, variance_break_signal
+):
+    got = Pelt(model="normal", min_size=min_size, jump=jump).fit_predict(
+        variance_break_signal, pen
+    )
+    assert got == pure_python_bkps(
+        variance_break_signal, pen, model="normal", min_size=min_size, jump=jump
+    )
+
+
+@pytest.mark.parametrize("min_size,jump", [(2, 5), (12, 5)])
+def test_normal_recovers_planted_variance_break(min_size, jump, variance_break_signal):
+    """At pen=10 the planted change is recovered exactly (smaller penalties
+    keep extra likelihood-chatter splits, which the equality test above
+    covers instead)."""
+    assert Pelt(model="normal", min_size=min_size, jump=jump).fit_predict(
+        variance_break_signal, 10.0
+    ) == [250, 500]
