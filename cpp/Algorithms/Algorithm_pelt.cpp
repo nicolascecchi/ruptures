@@ -45,9 +45,14 @@ Algorithm_pelt::Algorithm_pelt(Model_Base& model_, arma::uword min_size_, arma::
  * The pruning criterion compares the cost of a candidate change-point plus the segment cost
  * against the best solution found for current time. Change-points that cannot improve future
  * segmentations are discarded.
- * 
+ *
+ * The segment costs are never evaluated here: predict() has just computed them for
+ * exactly the same admissible points and hands them over through @p candidate_costs,
+ * so each segment cost is computed once per scan instead of twice.
+ *
  * @param[in] t The current time index at which pruning is performed. Indicates how many points have been observed so far.
- * 
+ * @param[in] candidate_costs dp_cost(idx) + segment_cost(idx, t) for each admissible point, in @c admissible_points order, as computed by predict().
+ *
  * @note This method modifies the internal state:
  *       - Updates @c admissible_points so that the first @c new_len entries contain the remaining admissible change-points after pruning
  *       - Stores the new count of admissible points in @c admissible_size_at_t at the next change-point to scan (t + jump, the last observation when t + jump overshoots it)
@@ -60,19 +65,21 @@ Algorithm_pelt::Algorithm_pelt(Model_Base& model_, arma::uword min_size_, arma::
  * @see admissible_size_at_t
  * @see model.compute_segment_cost()
  */
-void Algorithm_pelt::prune(arma::uword t){
+void Algorithm_pelt::prune(arma::uword t, const arma::dvec& candidate_costs){
     arma::uword new_len {0}; // remove declaration from the function.
     arma::uword idx;
+    // dp_cost(t) is settled by the time we prune, and the loop below does not touch it.
+    const double cat = dp_cost(t);
 
     // We explicitly don't want to go over all the admissible_points vector
     // but only from 0 up to the number of admissibles at time t, which is stored in admissible_size_at_t(t)
     // Going all over the vector would be making nonsense computations.
+    // candidate_costs(i) is dp_cost(idx) + the cost of {y_idx+1,...,y_t}, which
+    // predict() has already computed for this very idx: recomputing the segment
+    // cost here would evaluate every segment of the run exactly twice.
     for (arma::uword i = 0; i < admissible_size_at_t(t); i++){
         idx = admissible_points(i);
-        auto cas = dp_cost(idx);
-        auto seg_cost = model.compute_segment_cost(idx, t);
-        auto cat = dp_cost(t);
-        if (cas + seg_cost <= cat + EPSILON){
+        if (candidate_costs(i) <= cat + EPSILON){
             admissible_points(new_len) = idx;
             new_len += 1;
         }
@@ -120,6 +127,10 @@ void Algorithm_pelt::predict(double beta){
         admissible_points = arma::umat(model.nobs + 1, 1, arma::fill::zeros);
         admissible_size_at_t = arma::umat(model.nobs + 2, 1, arma::fill::zeros);
     }
+    // One candidate cost per admissible point at the current t, filled by the
+    // scan loop below and handed over to prune(), which applies its inequality
+    // on those very values: no segment cost is evaluated twice.
+    arma::dvec candidate_costs(model.nobs + 1, arma::fill::zeros);
     // Set variables to controlled initial states.
     double CURR_MIN{INF};
     double segment_cost{0}; 
@@ -151,10 +162,18 @@ void Algorithm_pelt::predict(double beta){
         for (arma::uword i = 0; i < admissible_size_at_t(t); i++){
             s = admissible_points(i);
             if (s > 0 && s < min_size){
+                // No segment starts before the signal for these starts (Python:
+                // KeyError on partitions[s]), so they are not candidates; prune()
+                // still needs the value it compares them with.
+                candidate_costs(i) = dp_cost(s) + model.compute_segment_cost(s, t);
                 continue;
             }
             segment_cost = model.compute_segment_cost(s, t);
-            candidate_cost = (dp_cost(s) + segment_cost + beta);
+            // Cache the penalty-free sum, which is exactly what prune() compares:
+            // caching the penalty-inclusive candidate instead would move the
+            // pruning boundary by one rounding.
+            candidate_costs(i) = dp_cost(s) + segment_cost;
+            candidate_cost = candidate_costs(i) + beta;
             if (candidate_cost < CURR_MIN){
                 CURR_MIN = candidate_cost;
                 best_s = s;
@@ -163,7 +182,7 @@ void Algorithm_pelt::predict(double beta){
         // Use segment_cost and beta to update optimal partitioning out of previous time loops
         dp_cost(t) = CURR_MIN;
         dp_prev_time(t) = best_s;
-        prune(t); // updates admissible_points vector inplace
+        prune(t, candidate_costs); // updates admissible_points vector inplace
         if (t == model.nobs){
             break;
         }

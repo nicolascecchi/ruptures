@@ -29,7 +29,9 @@ class Algorithm_pelt : public Algorithm_Base {
         void backtrack() override;
 
     private:
-        void prune(arma::uword t);
+        // Prunes the admissible starts at t using the candidate costs predict()
+        // has just computed for those same starts, in admissible_points order.
+        void prune(arma::uword t, const arma::dvec& candidate_costs);
         arma::uword min_size; /**< smallest admissible segment length */
         arma::uword jump;     /**< candidate change points are multiples of jump */
         //double get_cost_at_t(int t) const { return dp_cost[t]; }
