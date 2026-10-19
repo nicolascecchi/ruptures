@@ -20,8 +20,7 @@ Model_clinear::Model_clinear(const arma::Mat<double>& data):
 // Cost of rows [start, end) = Python CostCLinear.error (costs/costclinear.py):
 // the line is anchored on the point BEFORE the segment (y[start-1], so for
 // start == 0 the evaluated segment is [1, end)); anchors are read in
-// absolute coordinates (see the Model_linear_continuous fix in the working
-// diary).
+// absolute coordinates.
 double Model_clinear::compute_segment_cost(arma::uword start, arma::uword end) {
     if (start == 0) {
         start = 1;

@@ -2,10 +2,8 @@
 Model_clinear is an implementation of the Model_Base that computes the Python CostCLinear cost (costs/costclinear.py): a piecewise linear approximation with a continuity constraint.
 Derived from Model_Base class, it will have an compute_segment_cost() member function to compute the cost over a segment.
 
-NOTE: this is NOT the same segmentation model as Model_linear_continuous,
-which follows the biblio-these convention of anchoring the line on the
-segment endpoints. Model_clinear replicates Python: the line is anchored on
-the point BEFORE the segment, and anchors are read at absolute positions.
+Model_clinear replicates Python: the line is anchored on the point BEFORE
+the segment, and anchors are read at absolute positions.
 */
 
 #ifndef MODEL_CLINEAR_H

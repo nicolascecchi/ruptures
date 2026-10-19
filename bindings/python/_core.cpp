@@ -36,7 +36,6 @@
 #include "Models/Model_constant_binomial.h"
 #include "Models/Model_constant_rank.h"
 #include "Models/Model_linear.h"
-#include "Models/Model_linear_continuous.h"
 #include "Models/Model_l1.h"
 #include "Models/Model_rbf.h"
 #include "Models/Model_cosine.h"
@@ -164,19 +163,6 @@ void init_models(py::module_ &models) {
             ,py::arg("data")
         )
         .def("compute_segment_cost", &Model_linear::compute_segment_cost
-            , "Compute the cost of a segment defined by start and end indices"
-            , py::arg("start"), py::arg("end")
-    );
-
-    // Bind Model_linear_continuous class
-    py::class_<Model_linear_continuous, Model_Base>(models
-        , "CostLinearContinuous"
-        , "Model for detecting changes in continuous linear regression coefficients with Gaussian noise.")
-        .def(py::init<const arma::Mat<double>&>()
-            ,"Constructor that takes a 2D numpy array as input data"
-            ,py::arg("data")
-        )
-        .def("compute_segment_cost", &Model_linear_continuous::compute_segment_cost
             , "Compute the cost of a segment defined by start and end indices"
             , py::arg("start"), py::arg("end")
     );

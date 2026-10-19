@@ -64,7 +64,6 @@ def pybind_ext_modules():
                 "cpp/Models/Model_constant_binomial.cpp",
                 "cpp/Models/Model_constant_rank.cpp",
                 "cpp/Models/Model_linear.cpp",
-                "cpp/Models/Model_linear_continuous.cpp",
                 "cpp/Models/Model_l1.cpp",
                 "cpp/Models/Model_rbf.cpp",
                 "cpp/Models/Model_cosine.cpp",
