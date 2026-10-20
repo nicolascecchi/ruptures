@@ -9,7 +9,7 @@ from ruptures.costs import CostL2
 from ruptures.datasets import pw_constant
 from ruptures.detection import Pelt
 
-pytest.importorskip("ruptures._core", reason="the compiled core is not built")
+_core = pytest.importorskip("ruptures._core", reason="the compiled core is not built")
 
 
 @pytest.fixture(scope="module")
@@ -426,3 +426,65 @@ def test_normal_recovers_planted_variance_break(min_size, jump, variance_break_s
     assert Pelt(model="normal", min_size=min_size, jump=jump).fit_predict(
         variance_break_signal, 10.0
     ) == [250, 500]
+
+
+# ---------------------------------------------------------------------------
+# Compiled-only distribution models (Poisson, exponential, binomial).
+# They have no Python counterpart; costs are checked against their closed
+# forms and against the degenerate-segment limit (cost 0).
+# ---------------------------------------------------------------------------
+
+
+def test_compiled_poisson_cost():
+    """Poisson cost of [1, 2, 3]: S - S log(S / L), with S = 6, L = 3."""
+    model = _core.models.ConstantPoisson(np.array([[1.0], [2.0], [3.0]]))
+    assert model.compute_segment_cost(0, 3) == pytest.approx(6 - 6 * np.log(2))
+
+
+def test_compiled_exponential_cost():
+    """Exponential cost of [1, 2, 3]: L + L log(S / L)."""
+    model = _core.models.ConstantExponential(np.array([[1.0], [2.0], [3.0]]))
+    assert model.compute_segment_cost(0, 3) == pytest.approx(3 + 3 * np.log(2))
+
+
+def test_compiled_binomial_cost():
+    """Binomial cost of [2, 4, 6] with m = 10: NLL at p = 0.4."""
+    model = _core.models.ConstantBinomial(np.array([[2.0], [4.0], [6.0]]), 10)
+    expected = -(12 * np.log(0.4) + 18 * np.log(0.6))
+    assert model.compute_segment_cost(0, 3) == pytest.approx(expected)
+
+
+def test_compiled_poisson_all_zero_segment_has_zero_cost():
+    """An all-zero segment has the limit cost 0, not NaN."""
+    zeros = np.zeros((10, 2))
+    model = _core.models.ConstantPoisson(zeros)
+    assert model.compute_segment_cost(0, 5) == 0.0
+    assert model.compute_segment_cost(5, 10) == 0.0
+
+
+def test_compiled_poisson_mixed_dimensions():
+    """A degenerate dimension adds 0: the mixed cost equals the count one."""
+    counts = np.arange(1, 11, dtype=float).reshape(-1, 1)
+    signal = np.hstack([np.zeros((10, 1)), counts])
+    mixed = _core.models.ConstantPoisson(signal).compute_segment_cost(0, 5)
+    only_counts = _core.models.ConstantPoisson(counts).compute_segment_cost(0, 5)
+    assert mixed == pytest.approx(only_counts)
+
+
+def test_compiled_binomial_degenerate_segments_have_zero_cost():
+    """All failures (p = 0) and all successes (p = 1) cost 0."""
+    m = 6
+    failures = np.zeros((10, 2))
+    successes = np.full((10, 2), float(m))
+    assert _core.models.ConstantBinomial(failures, m).compute_segment_cost(0, 5) == 0.0
+    assert _core.models.ConstantBinomial(successes, m).compute_segment_cost(0, 5) == 0.0
+
+
+def test_compiled_binomial_mixed_dimensions():
+    """A degenerate dimension adds 0: the mixed cost equals the count one."""
+    m = 6
+    counts = np.array([[1.0], [2.0], [3.0], [2.0], [4.0]] + [[3.0]] * 5)
+    signal = np.hstack([np.zeros((10, 1)), counts])
+    mixed = _core.models.ConstantBinomial(signal, m).compute_segment_cost(0, 5)
+    only_counts = _core.models.ConstantBinomial(counts, m).compute_segment_cost(0, 5)
+    assert mixed == pytest.approx(only_counts)

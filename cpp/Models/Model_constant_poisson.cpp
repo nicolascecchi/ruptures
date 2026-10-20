@@ -30,7 +30,12 @@ double Model_constant_poisson::compute_segment_cost(arma::uword start, arma::uwo
     double segment_cost = 0.0;
     for (arma::uword d = 0; d < ndims; ++d) {
         const double sum_y  = cumsum_y(end, d) - cumsum_y(start, d);
-        segment_cost +=  sum_y - sum_y * std::log(sum_y / segment_length) ;
+        // An all-zero dimension has cost 0 in the mathematical limit
+        // (0 * log(0) is undefined), so the guard keeps the compiled cost
+        // finite for valid count data.
+        if (sum_y > 0.0) {
+            segment_cost +=  sum_y - sum_y * std::log(sum_y / segment_length) ;
+        }
     }
     return segment_cost;
 }

@@ -31,11 +31,17 @@ double Model_constant_binomial::compute_segment_cost(arma::uword start, arma::uw
     const double segment_length = end - start; // number of points len = t - (s+1) -1 = t - s
     double segment_cost = 0.0;
 
+    const double total = static_cast<double>(segment_length) * static_cast<double>(m);
     for (arma::uword d = 0; d < ndims; ++d) {
         const double sum_y  = cumsum_y(end, d) - cumsum_y(start, d);
-        segment_phat = sum_y/(segment_length * m); 
-        segment_cost +=   -(std::log(segment_phat)*sum_y + 
-                            std::log(1-segment_phat)*(segment_length * m - sum_y));
+        // Degenerate segments (all failures, phat = 0, or all successes,
+        // phat = 1) have cost 0 in the mathematical limit. The guard keeps
+        // the compiled cost finite for valid binomial data.
+        if (sum_y > 0.0 && sum_y < total) {
+            segment_phat = sum_y/total;
+            segment_cost +=   -(std::log(segment_phat)*sum_y +
+                                std::log(1-segment_phat)*(total - sum_y));
+        }
     }
     return segment_cost;
 }
