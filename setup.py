@@ -68,6 +68,7 @@ def pybind_ext_modules():
                 "cpp/Models/Model_rbf.cpp",
                 "cpp/Models/Model_cosine.cpp",
                 "cpp/Models/Model_ar.cpp",
+                "cpp/Models/Model_var.cpp",
                 "cpp/Models/Model_mahalanobis.cpp",
                 "cpp/Models/Model_clinear.cpp",
                 "cpp/Models/Model_normal.cpp",

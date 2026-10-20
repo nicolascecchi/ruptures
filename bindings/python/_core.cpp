@@ -7,7 +7,9 @@
  * Algorithm_pelt is further extended with min_size/jump parameters following
  * the grid semantics of ruptures' pure Python Pelt; the model classes are
  * copied verbatim, except the ones implemented here (l1, rbf, cosine, ar,
- * mahalanobis, clinear) for parity with ruptures' Python cost functions.
+ * mahalanobis, clinear) for parity with ruptures' Python cost functions. Model_var
+ * is the OOP adaptation of an imported functional prefiltered VAR cost
+ * (ridge prefiltering dropped), with cumulative statistics per segment cost.
  * Upstream's Model_Factory.h and Model_splineop.h (and its
  * Functions/Faulhaber dependency, which Model_splineop.h includes) are not
  * synced yet: the factory includes Model_splineop.h, so both are left for a
@@ -40,6 +42,7 @@
 #include "Models/Model_rbf.h"
 #include "Models/Model_cosine.h"
 #include "Models/Model_ar.h"
+#include "Models/Model_var.h"
 #include "Models/Model_mahalanobis.h"
 #include "Models/Model_clinear.h"
 #include "Models/Model_normal.h"
@@ -218,6 +221,22 @@ void init_models(py::module_ &models) {
             ,py::arg("signal"), py::arg("covar")
         )
         .def("compute_segment_cost", &Model_ar::compute_segment_cost
+            , "Compute the cost of a segment defined by start and end indices"
+            , py::arg("start"), py::arg("end")
+    );
+
+    // Bind Model_var class
+    py::class_<Model_var, Model_Base>(models
+        , "CostVar"
+        , "Model for detecting changes in vector autoregressive coefficients "
+        "(multivariate generalisation of CostAR).")
+        .def(py::init<const arma::Mat<double>&, arma::uword, bool>()
+            ,"Constructor that takes a 2D numpy array, the autoregressive "
+            "order and whether to fit an intercept; the lagged covariates are "
+            "built in C++ (the first order rows have no lags and are zero)."
+            ,py::arg("data"), py::arg("order"), py::arg("intercept") = true
+        )
+        .def("compute_segment_cost", &Model_var::compute_segment_cost
             , "Compute the cost of a segment defined by start and end indices"
             , py::arg("start"), py::arg("end")
     );
