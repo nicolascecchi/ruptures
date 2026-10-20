@@ -488,3 +488,171 @@ def test_compiled_binomial_mixed_dimensions():
     mixed = _core.models.ConstantBinomial(signal, m).compute_segment_cost(0, 5)
     only_counts = _core.models.ConstantBinomial(counts, m).compute_segment_cost(0, 5)
     assert mixed == pytest.approx(only_counts)
+
+
+# ---------------------------------------------------------------------------
+# Python bindings for the compiled-only costs. The classes under
+# ruptures.costs contain no cost formula: they build the C++ model and
+# forward error() to it. model="poisson"/"exponential"/"binomial" is thus
+# usable from every estimator accepting a model string, but only when the
+# compiled backend is built.
+# ---------------------------------------------------------------------------
+
+
+def _poisson_signal(n_samples=200, seed=0):
+    rng = np.random.default_rng(seed)
+    rates = np.r_[np.full(n_samples // 2, 1.0), np.full(n_samples // 2, 5.0)]
+    return rng.poisson(rates).astype(float)
+
+
+def _exponential_signal(n_samples=200, seed=0):
+    rng = np.random.default_rng(seed)
+    scales = np.r_[np.full(n_samples // 2, 1.0), np.full(n_samples // 2, 0.2)]
+    return rng.exponential(scales)
+
+
+def _binomial_signal(n_samples=200, m=10, seed=0):
+    rng = np.random.default_rng(seed)
+    probs = np.r_[np.full(n_samples // 2, 0.2), np.full(n_samples // 2, 0.8)]
+    return rng.binomial(m, probs).astype(float)
+
+
+COMPILED_ONLY_MODELS = [
+    ("poisson", None),
+    ("exponential", None),
+    ("binomial", {"m": 10}),
+]
+
+
+@pytest.mark.parametrize("model,params", COMPILED_ONLY_MODELS)
+def test_compiled_only_models_are_selectable_by_name(model, params):
+    """The model strings resolve to the binding classes and dispatch to C++."""
+    from ruptures.costs import CostBinomial, CostExponential, CostPoisson, cost_factory
+
+    expected = {
+        "poisson": CostPoisson,
+        "exponential": CostExponential,
+        "binomial": CostBinomial,
+    }[model]
+    args = {} if params is None else params
+    assert type(cost_factory(model, **args)) is expected
+
+    pelt = Pelt(model=model, params=params).fit(np.full((10, 1), 2.0))
+    assert pelt._use_compiled
+    assert pelt._compiled_model() is not None
+
+
+def test_compiled_only_cost_delegates_to_cpp():
+    """error() returns the C++ value, including the degenerate limit 0."""
+    from ruptures.costs import CostPoisson
+
+    counts = np.array([[1.0], [2.0], [3.0]])
+    assert CostPoisson().fit(counts).error(0, 3) == pytest.approx(6 - 6 * np.log(2))
+    assert CostPoisson().fit(np.zeros((10, 1))).error(0, 5) == 0.0
+
+
+@pytest.mark.parametrize(
+    "model,params,signal_factory,pen",
+    [
+        ("poisson", None, _poisson_signal, 50.0),
+        ("exponential", None, _exponential_signal, 50.0),
+        ("binomial", {"m": 10}, _binomial_signal, 100.0),
+    ],
+)
+def test_compiled_only_pelt_matches_direct_compiled_pelt(
+    model, params, signal_factory, pen
+):
+    """Pelt(model=...) returns what the compiled PELT returns on the same model."""
+    signal = signal_factory()
+    got = Pelt(model=model, params=params, min_size=2, jump=5).fit_predict(signal, pen)
+
+    if model == "poisson":
+        compiled_model = _core.models.ConstantPoisson(
+            np.ascontiguousarray(signal, dtype=np.float64)
+        )
+    elif model == "exponential":
+        compiled_model = _core.models.ConstantExponential(
+            np.ascontiguousarray(signal, dtype=np.float64)
+        )
+    else:
+        compiled_model = _core.models.ConstantBinomial(
+            np.ascontiguousarray(signal, dtype=np.float64), 10
+        )
+    algorithm = _core.algorithms.PELT(compiled_model, min_size=2, jump=5)
+    algorithm.predict(float(pen))
+    expected = np.asarray(algorithm.get_changepoints(), dtype=int).ravel().tolist()
+
+    assert got == expected
+    assert got == [100, 200]
+
+
+@pytest.mark.parametrize(
+    "model,params,signal_factory,pen",
+    [
+        ("poisson", None, _poisson_signal, 50.0),
+        ("exponential", None, _exponential_signal, 50.0),
+        ("binomial", {"m": 10}, _binomial_signal, 100.0),
+    ],
+)
+def test_compiled_only_matches_pure_python_pelt_loop(
+    model, params, signal_factory, pen
+):
+    """With the compiled PELT algorithm disabled, the Python loop drives the
+    same C++ costs and returns the same breakpoints."""
+    signal = signal_factory()
+    got = Pelt(model=model, params=params, min_size=2, jump=5).fit_predict(signal, pen)
+    assert got == pure_python_bkps(
+        signal, pen, model=model, params=params, min_size=2, jump=5
+    )
+
+
+def test_compiled_only_models_work_with_other_estimators():
+    """The binding costs also drive the Python algorithms, still via C++."""
+    from ruptures.detection import Binseg, Dynp
+
+    signal = _poisson_signal()
+    for algorithm in (
+        Binseg(model="poisson", min_size=2, jump=5),
+        Dynp(model="poisson", min_size=2, jump=5),
+    ):
+        bkps = algorithm.fit_predict(signal, n_bkps=1)
+        assert bkps == [100, 200]
+
+
+def test_compiled_binomial_requires_m():
+    from ruptures.costs import CostBinomial
+
+    with pytest.raises(TypeError):
+        CostBinomial()
+    with pytest.raises(ValueError):
+        CostBinomial(0)
+    with pytest.raises(ValueError):
+        CostBinomial(2.5)
+
+
+def test_compiled_only_costs_validate_support():
+    from ruptures.costs import CostBinomial, CostExponential, CostPoisson
+
+    with pytest.raises(ValueError):
+        CostPoisson().fit(np.array([[-1.0], [2.0]]))
+    with pytest.raises(ValueError):
+        CostExponential().fit(np.array([[0.0], [2.0]]))
+    with pytest.raises(ValueError):
+        CostBinomial(5).fit(np.array([[6.0], [2.0]]))
+    with pytest.raises(ValueError):
+        CostPoisson().fit(np.array([[np.nan], [2.0]]))
+
+    with pytest.warns(UserWarning):
+        CostPoisson().fit(np.array([[1.5], [2.0]]))
+    with pytest.warns(UserWarning):
+        CostBinomial(5).fit(np.array([[1.5], [2.0]]))
+
+
+def test_compiled_only_models_require_the_backend(monkeypatch):
+    """Without ruptures._core, constructing the binding fails clearly."""
+    import ruptures.costs.compiled as compiled
+    from ruptures.costs import CostPoisson
+
+    monkeypatch.setattr(compiled, "_core", None)
+    with pytest.raises(ImportError, match="compiled backend"):
+        CostPoisson()

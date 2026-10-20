@@ -6,9 +6,22 @@ from typing_extensions import Self
 
 import numpy as np
 from numpy.typing import NDArray
-from ruptures.costs import (CostAR, CostCLinear, CostCosine, CostL1, CostL2,
-                            CostLinear, CostMl, CostNormal, CostRbf, CostRank,
-                            cost_factory)
+from ruptures.costs import (
+    CostAR,
+    CostBinomial,
+    CostCLinear,
+    CostCosine,
+    CostExponential,
+    CostL1,
+    CostL2,
+    CostLinear,
+    CostMl,
+    CostNormal,
+    CostPoisson,
+    CostRbf,
+    CostRank,
+    cost_factory,
+)
 from ruptures.base import BaseCost, BaseEstimator
 from ruptures.exceptions import BadSegmentationParameters
 from ruptures.utils import sanity_check
@@ -49,6 +62,11 @@ _COMPILED_COST_BUILDERS = {
         _core.models.CostNormal(np.ascontiguousarray(cost.signal, dtype=np.float64))
         if cost.add_small_diag is True else None
     ),
+    # Compiled-only costs: the Python classes are bindings that already hold
+    # the C++ model built in fit(); nothing needs to be adapted.
+    CostPoisson: lambda cost: cost._cpp_model,
+    CostExponential: lambda cost: cost._cpp_model,
+    CostBinomial: lambda cost: cost._cpp_model,
 } if _core is not None else {}
 
 
@@ -79,10 +97,13 @@ class Pelt(BaseEstimator):
 
         Args:
             model (str, optional): segment model, ["l1", "l2", "linear", "clinear",
-                "normal", "rank", "rbf", "cosine", "ar", "mahalanobis"].
-                Models that have a compiled counterpart are dispatched to the
-                compiled backend when it is built. Not used if ``'custom_cost'``
-                is not None.
+                "normal", "rank", "rbf", "cosine", "ar", "mahalanobis", "poisson",
+                "exponential", "binomial"]. Models that have a compiled
+                counterpart are dispatched to the compiled backend when it is
+                built. "poisson", "exponential" and "binomial" only exist in the
+                compiled backend, which must therefore be built; "binomial"
+                additionally requires the number of trials through
+                ``params={"m": ...}``. Not used if ``'custom_cost'`` is not None.
             custom_cost (BaseCost, optional): custom cost function. Defaults to None.
             min_size (int, optional): minimum segment length.
             jump (int, optional): subsample (one every *jump* points).
