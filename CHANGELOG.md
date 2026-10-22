@@ -4,6 +4,15 @@ The latest release notes are available directly in Github: [ruptures/releases](h
 
 Earlier releases are documented below ⬇️.
 
+## [Unreleased]
+
+### Changed
+
+- Repository restructure: the Python package now lives in a self-contained `python/` subproject (`python/src/ruptures`, `python/tests`, packaging metadata in `python/pyproject.toml`).
+- The C++ backend is now built with a root `CMakeLists.txt` wrapped by the `scikit-build-core` build backend, replacing `setup.py`/`setup.cfg`.
+- Declare the previously undeclared `typing_extensions>=4.0` runtime dependency (used unconditionally by the API modules).
+- No change to the runtime behavior of the package.
+
 ## [1.1.2] - 2020-12-01
 
 ### Added
