@@ -1,15 +1,121 @@
 [build-system]
-# Minimum requirements for the build system to execute.
 requires = [
-    "setuptools>=42",  # https://github.com/deepcharles/ruptures/pull/100#discussion_r553700339
-    "wheel",
-    "Cython>=0.28.5",
-    "setuptools_scm[toml]>=3.4",  # https://scikit-hep.org/developer/packaging#git-tags-official-pypa-method
+    "scikit-build-core~=1.0",
+    "cmake>=3.23",
+    "ninja",
+    "cython>=3.0",
     "numpy>=2.0.0",  # https://numpy.org/doc/stable/dev/depending_on_numpy.html
-    "scipy>=0.19.1",
     "pybind11>=2.12",  # builds the optional compiled backend (ruptures._core)
+    "setuptools-scm>=8",  # https://scikit-hep.org/developer/packaging#git-tags-official-pypa-method
 ]
-build-backend = "setuptools.build_meta"
+build-backend = "scikit_build_core.build"
+
+# [project] is transplanted verbatim from the former setup.cfg.
+[project]
+name = "ruptures"
+license = "BSD-2-Clause"
+authors = [
+    { name = "Charles Truong, Laurent Oudre, Nicolas Vayatis", email = "charles@doffy.net" },
+]
+maintainers = [
+    { name = "Charles Truong, Olivier Boulant" },
+]
+description = "Change point detection for signals in Python."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "typing_extensions>=4.0",  # `from typing_extensions import Self` in 18 modules, unconditional
+]
+keywords = [
+    "change point detection",
+    "signal segmentation",
+    "computer science",
+    "machine learning",
+    "kernel methods",
+    "time series",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Intended Audience :: Science/Research",
+]
+dynamic = ["version"]
+
+[project.urls]
+Documentation = "https://centre-borelli.github.io/ruptures-docs/"
+Source = "https://github.com/deepcharles/ruptures/"
+"Bug Tracker" = "https://github.com/deepcharles/ruptures/issues/"
+
+[project.optional-dependencies]
+display = ["matplotlib"]
+test = [
+    "pytest",
+    "pytest-cov",
+]
+dev = [
+    "pre-commit",
+]
+docs = [
+    "jupyter",
+    "librosa",
+    "matplotlib",
+    "mkdocs",
+    "mkdocs-macros-plugin",
+    "mkdocs-material",
+    "mkdocs-section-index",
+    "mkdocstrings[python]>=0.18",  # https://mkdocstrings.github.io/handlers/overview/#about-the-python-handlers
+    "mknotebooks",
+    "pymdown-extensions",
+    "nltk",
+]
+
+# Build-time version from git tags (setuptools-scm; keeps
+# SETUPTOOLS_SCM_PRETEND_VERSION working), provided by scikit-build-core.
+[[tool.dynamic-metadata]]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
+# The provider runs from python/ (the pyproject dir), one level below the git
+# root: discovery must walk up to find it (classic setuptools-scm runtime
+# default, off by default when read from pyproject).
+[tool.setuptools_scm]
+search_parent_directories = true
+
+[tool.scikit-build]
+# Read cmake_minimum_required from the root CMakeLists.txt (auto-detects >=3.23).
+cmake.version = "CMakeLists.txt"
+# This file lives in python/; the build's CMakeLists.txt is the repository root.
+# An override below switches this for builds from the flattened sdist.
+cmake.source-dir = ".."
+editable.mode = "redirect"
+
+[tool.scikit-build.wheel]
+packages = ["src/ruptures"]
+# The in-tree LICENSE is a symlink to ../LICENSE.
+license-files = ["LICENSE"]
+
+# The sdist must be self-contained: the root CMakeLists.txt, the C++ core and
+# the header-only submodule includes are force-included next to the (flattened)
+# Python package. Parent-relative sources are allowed; a missing source errors.
+# README.md and LICENSE are symlinks to the parent file, already force-included
+# from the target, so the bare names are excluded to avoid duplicate members.
+[tool.scikit-build.sdist]
+exclude = ["README.md", "LICENSE"]
+force-include = {"../CMakeLists.txt" = "CMakeLists.txt", "../cpp" = "cpp", "../extern/armadillo/include" = "extern/armadillo/include", "../extern/carma/include" = "extern/carma/include", "../README.md" = "README.md", "../LICENSE" = "LICENSE"}
+
+# Building from the sdist: everything is at the root, and the core is complete
+# by construction, so make a missing core a hard error rather than a silent skip.
+[[tool.scikit-build.overrides]]
+if.from-sdist = true
+cmake.source-dir = "."
+cmake.define.RUPTURES_REQUIRE_CORE = "ON"
 
 # pytest config
 # For more information, see:
@@ -19,5 +125,5 @@ minversion = "6.0"
 addopts = "-vv"
 testpaths = ["tests"]
 
-[tool.setuptools_scm]
-write_to = "src/ruptures/version.py"
+[tool.coverage.run]
+source_pkgs = ["ruptures"]
