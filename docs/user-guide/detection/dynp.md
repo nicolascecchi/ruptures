@@ -13,6 +13,8 @@ In order to work, **the user must specify in advance the number of changes to de
 The complexity of the dynamic programming approach is of the order $\mathcal{O}(CKn^2)$, where $K$ is the number of change points to detect, $n$ the number of samples and $C$ the complexity of calling the considered cost function on one sub-signal.
 Consequently, piecewise constant models (`model=l2`) are significantly faster than linear or autoregressive models.
 
+For built-in cost functions with a compiled counterpart and a positive-length grid, the segmentation is delegated to the compiled C++ backend `ruptures._core` (algorithm `SegmentNeighborhood`), which enforces the same `min_size` and `jump` semantics and returns the same breakpoints much faster. Any other configuration (custom cost, invalid grid parameters, or a checkout without the compiled backend) automatically falls back to the native Python implementation described above.
+
 To reduce the computational cost, you can consider only a subsample of possible change point indexes, by changing the `min_size` and `jump` arguments when instantiating [Dynp](#ruptures.detection.Dynp):
 
 - `min_size` controls the minimum distance between change points; for instance, if `min_size=10`, all change points will be at least 10 samples apart.

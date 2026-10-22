@@ -58,6 +58,7 @@ def pybind_ext_modules():
             sources=[
                 "bindings/python/_core.cpp",
                 "cpp/Algorithms/Algorithm_pelt.cpp",
+                "cpp/Algorithms/Algorithm_SegmentNeighborhood.cpp",
                 "cpp/Models/Model_constant_normal.cpp",
                 "cpp/Models/Model_constant_poisson.cpp",
                 "cpp/Models/Model_constant_exponential.cpp",

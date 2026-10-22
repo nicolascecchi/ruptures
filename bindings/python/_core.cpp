@@ -5,7 +5,10 @@
  * assembles the Python-facing bindings, extracting the relevant sections of
  * the upstream `py_bind_algorithms.cpp` and `py_bind_models.cpp` files.
  * Algorithm_pelt is further extended with min_size/jump parameters following
- * the grid semantics of ruptures' pure Python Pelt; the model classes are
+ * the grid semantics of ruptures' pure Python Pelt. Algorithm_SegmentNeighborhood
+ * is likewise extended with min_size/jump, following the grid semantics of
+ * ruptures' pure Python Dynp, and renamed from upstream's
+ * Algorithm_SegmentNeighbourhood to the American spelling. The model classes are
  * copied verbatim, except the ones implemented here (l1, rbf, cosine, ar,
  * mahalanobis, clinear) for parity with ruptures' Python cost functions. Model_var
  * is the OOP adaptation of an imported functional prefiltered VAR cost
@@ -31,6 +34,7 @@
 
 #include "Algorithms/Algorithm_Base.h"
 #include "Algorithms/Algorithm_pelt.h"
+#include "Algorithms/Algorithm_SegmentNeighborhood.h"
 #include "Models/Model_Base.h"
 #include "Models/Model_constant_normal.h"
 #include "Models/Model_constant_poisson.h"
@@ -323,6 +327,26 @@ void init_algorithms(py::module_ &algorithms) {
             , py::arg("beta")
         )
         .def("backtrack", &Algorithm_pelt::backtrack
+            , "Backtrack to find the optimal change-points."
+    );
+    // Bind Algorithm_SegmentNeighborhood class
+    py::class_<Algorithm_SegmentNeighborhood, Algorithm_Base>(algorithms, "SegmentNeighborhood"
+    ,"Segment neighborhood algorithm: optimal segmentation with a fixed number "
+    "of changepoints, adapted with min_size and jump following ruptures' "
+    "pure Python Dynp grid semantics.")
+        .def(py::init<Model_Base&, arma::uword, arma::uword>()
+            ,"Constructor that takes a reference to a Model_Base object, "
+            "the minimum segment length (min_size) and the step between "
+            "candidate change points (jump); defaults reproduce the "
+            "single-argument behaviour."
+            , py::arg("model"), py::arg("min_size") = 1, py::arg("jump") = 1
+            , py::keep_alive<1, 2>()
+        )
+        .def("predict", py::overload_cast<arma::uword>(&Algorithm_SegmentNeighborhood::predict)
+            , "Predict changepoints for a fixed number of changepoints K."
+            , py::arg("K")
+        )
+        .def("backtrack", &Algorithm_SegmentNeighborhood::backtrack
             , "Backtrack to find the optimal change-points."
     );
 }
