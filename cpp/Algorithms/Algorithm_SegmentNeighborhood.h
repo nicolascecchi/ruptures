@@ -7,16 +7,11 @@
 #include <armadillo>
 
 /*
-Adapted from an upstream C++ codebase, here extended with the
-min_size and jump segmentation parameters, following the same grid semantics
-as ruptures' pure Python Dynp: candidate change points are the multiples of
-`jump` and every segment is at least `min_size` points long. The defaults
-(1, 1) keep the original single-argument predict(uword) behaviour.
-
-NOTE: the upstream class and file are Algorithm_SegmentNeighbourhood (British
-spelling), renamed here to the American spelling. This file is an adaptation,
-not a verbatim copy: re-syncing it from upstream would drop the min_size/jump
-extension, which upstream's own copy does not have.
+Extended with the min_size and jump segmentation parameters, following the
+same grid semantics as ruptures' pure Python Dynp: candidate change points
+are the multiples of `jump` and every segment is at least `min_size` points
+long. The defaults (1, 1) keep the original single-argument predict(uword)
+behaviour.
 */
 
 class Algorithm_SegmentNeighborhood : public Algorithm_Base {

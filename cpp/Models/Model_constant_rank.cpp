@@ -11,8 +11,7 @@
 // tied values, like scipy's rankdata does for Python's CostRank. Without
 // this, tied columns (e.g. a constant signal) get an arbitrary permutation of
 // the ranks and their cost becomes very negative instead of 0, so PELT
-// returns spurious change points. Re-syncing this file verbatim from
-// biblio-these/src/ would revert the fix.
+// returns spurious change points.
 
 
 Model_constant_rank::Model_constant_rank(const arma::Mat<double>& data): 

@@ -40,34 +40,56 @@ except ImportError:  # compiled backend not built; the Python path is used.
 # model="normal" only matches its compiled counterpart for the v1.1.5
 # behaviour (add_small_diag=True): the 1e-6 diagonal bias is baked into the
 # compiled model, so add_small_diag=False stays on the Python path.
-_COMPILED_COST_BUILDERS = {
-    CostL2: lambda cost: _core.models.ConstantNormal(np.ascontiguousarray(cost.signal, dtype=np.float64)),
-    CostL1: lambda cost: _core.models.CostL1(np.ascontiguousarray(cost.signal, dtype=np.float64)),
-    CostRbf: lambda cost: _core.models.CostRbf(np.ascontiguousarray(cost.signal, dtype=np.float64), float(cost.gamma)),
-    CostCosine: lambda cost: _core.models.CostCosine(np.ascontiguousarray(cost.signal, dtype=np.float64)),
-    # CostAR.error() regresses the padded signal (cost.signal, mutated by
-    # fit()) on the lagged covariates (cost.covar), so both are passed.
-    CostAR: lambda cost: _core.models.CostAR(
-        np.ascontiguousarray(cost.signal, dtype=np.float64),
-        np.ascontiguousarray(cost.covar, dtype=np.float64)),
-    CostMl: lambda cost: _core.models.CostMl(
-        np.ascontiguousarray(cost.signal, dtype=np.float64),
-        np.ascontiguousarray(cost.metric, dtype=np.float64)),
-    CostCLinear: lambda cost: _core.models.CostCLinear(np.ascontiguousarray(cost.signal, dtype=np.float64)),
-    # compiled CostLinear expects observed variable and covariates in one matrix
-    CostLinear: lambda cost: _core.models.CostLinear(
-        np.ascontiguousarray(np.column_stack([cost.signal, cost.covar]), dtype=np.float64)),
-    CostRank: lambda cost: _core.models.ConstantRank(np.ascontiguousarray(cost.signal, dtype=np.float64)),
-    CostNormal: lambda cost: (
-        _core.models.CostNormal(np.ascontiguousarray(cost.signal, dtype=np.float64))
-        if cost.add_small_diag is True else None
-    ),
-    # Compiled-only costs: the Python classes are bindings that already hold
-    # the C++ model built in fit(); nothing needs to be adapted.
-    CostPoisson: lambda cost: cost._cpp_model,
-    CostExponential: lambda cost: cost._cpp_model,
-    CostBinomial: lambda cost: cost._cpp_model,
-} if _core is not None else {}
+_COMPILED_COST_BUILDERS = (
+    {
+        CostL2: lambda cost: _core.models.ConstantNormal(
+            np.ascontiguousarray(cost.signal, dtype=np.float64)
+        ),
+        CostL1: lambda cost: _core.models.CostL1(
+            np.ascontiguousarray(cost.signal, dtype=np.float64)
+        ),
+        CostRbf: lambda cost: _core.models.CostRbf(
+            np.ascontiguousarray(cost.signal, dtype=np.float64), float(cost.gamma)
+        ),
+        CostCosine: lambda cost: _core.models.CostCosine(
+            np.ascontiguousarray(cost.signal, dtype=np.float64)
+        ),
+        # CostAR.error() regresses the padded signal (cost.signal, mutated by
+        # fit()) on the lagged covariates (cost.covar), so both are passed.
+        CostAR: lambda cost: _core.models.CostAR(
+            np.ascontiguousarray(cost.signal, dtype=np.float64),
+            np.ascontiguousarray(cost.covar, dtype=np.float64),
+        ),
+        CostMl: lambda cost: _core.models.CostMl(
+            np.ascontiguousarray(cost.signal, dtype=np.float64),
+            np.ascontiguousarray(cost.metric, dtype=np.float64),
+        ),
+        CostCLinear: lambda cost: _core.models.CostCLinear(
+            np.ascontiguousarray(cost.signal, dtype=np.float64)
+        ),
+        # compiled CostLinear expects observed variable and covariates in one matrix
+        CostLinear: lambda cost: _core.models.CostLinear(
+            np.ascontiguousarray(
+                np.column_stack([cost.signal, cost.covar]), dtype=np.float64
+            )
+        ),
+        CostRank: lambda cost: _core.models.ConstantRank(
+            np.ascontiguousarray(cost.signal, dtype=np.float64)
+        ),
+        CostNormal: lambda cost: (
+            _core.models.CostNormal(np.ascontiguousarray(cost.signal, dtype=np.float64))
+            if cost.add_small_diag is True
+            else None
+        ),
+        # Compiled-only costs: the Python classes are bindings that already hold
+        # the C++ model built in fit(); nothing needs to be adapted.
+        CostPoisson: lambda cost: cost._cpp_model,
+        CostExponential: lambda cost: cost._cpp_model,
+        CostBinomial: lambda cost: cost._cpp_model,
+    }
+    if _core is not None
+    else {}
+)
 
 
 class Pelt(BaseEstimator):
@@ -78,11 +100,10 @@ class Pelt(BaseEstimator):
 
     For a positive penalty and a built-in cost with a compiled
     counterpart, the segmentation is delegated to the compiled C++
-    backend ``ruptures._core`` (imported from the ``biblio-these``
-    project), which returns the same breakpoints much faster for every
-    valid ``min_size`` and ``jump``. Every other configuration (custom
-    cost, subclass, unbuilt backend) uses the Python implementation
-    below.
+    backend ``ruptures._core``, which returns the same breakpoints much
+    faster for every valid ``min_size`` and ``jump``. Every other
+    configuration (custom cost, subclass, unbuilt backend) uses the
+    Python implementation below.
     """
 
     def __init__(

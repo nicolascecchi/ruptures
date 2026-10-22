@@ -7,9 +7,8 @@
 #include <armadillo>
 
 /*
-Imported from the biblio-these / miniruptures project. Extended here with the
-min_size and jump segmentation parameters, following the same grid semantics
-as ruptures' pure Python Pelt: candidate change points are the multiples of
+Extended with the min_size and jump segmentation parameters, following the
+same grid semantics as ruptures' pure Python Pelt: candidate change points are the multiples of
 `jump` that are at least `min_size`, plus the last observation. The defaults
 (1, 1) keep the original single-argument predict(double) behaviour.
 */

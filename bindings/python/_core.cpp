@@ -1,25 +1,18 @@
 /* pybind11 bindings for the compiled ``ruptures._core`` extension.
  *
- * The C++ sources (PELT algorithm and the cost model classes) are imported
- * from the `biblio-these` / `miniruptures` project; this file only
- * assembles the Python-facing bindings, extracting the relevant sections of
- * the upstream `py_bind_algorithms.cpp` and `py_bind_models.cpp` files.
- * Algorithm_pelt is further extended with min_size/jump parameters following
- * the grid semantics of ruptures' pure Python Pelt. Algorithm_SegmentNeighborhood
- * is likewise extended with min_size/jump, following the grid semantics of
- * ruptures' pure Python Dynp, and renamed from upstream's
- * Algorithm_SegmentNeighbourhood to the American spelling. The model classes are
- * copied verbatim, except the ones implemented here (l1, rbf, cosine, ar,
- * mahalanobis, clinear) for parity with ruptures' Python cost functions. Model_var
- * is the OOP adaptation of an imported functional prefiltered VAR cost
- * (ridge prefiltering dropped), with cumulative statistics per segment cost.
- * Upstream's Model_Factory.h and Model_splineop.h (and its
- * Functions/Faulhaber dependency, which Model_splineop.h includes) are not
- * synced yet: the factory includes Model_splineop.h, so both are left for a
- * dedicated splineop pass.
+ * This file only assembles the Python-facing bindings for the C++ sources
+ * under ``cpp/``: the PELT and SegmentNeighborhood algorithms and the cost
+ * model classes. Algorithm_pelt is extended with min_size/jump parameters
+ * following the grid semantics of ruptures' pure Python Pelt, and
+ * Algorithm_SegmentNeighborhood is extended the same way, following the
+ * grid semantics of ruptures' pure Python Dynp. The model classes mirror
+ * ruptures' Python cost functions, plus a few compiled-only models;
+ * Model_var is a stateful adaptation of a functional prefiltered VAR cost
+ * (ridge prefiltering dropped), with cumulative statistics per segment
+ * cost.
  *
  * The Python-visible names (``models.ConstantNormal``, ``algorithms.PELT``,
- * ...) follow the upstream binding names; the C++ class names are left
+ * ...) mirror ruptures' Python naming; the C++ class names are left
  * unchanged.
  *
  * NOTE: <carma> must be included before <armadillo> so that carma can install
@@ -353,8 +346,7 @@ void init_algorithms(py::module_ &algorithms) {
 
 PYBIND11_MODULE(_core, m) {
     m.doc() =
-        "Compiled C++ core for ruptures (PELT and cost model classes), "
-        "imported from the biblio-these / miniruptures project sources.";
+        "Compiled C++ core for ruptures (PELT and cost model classes).";
 
     py::module_ models = m.def_submodule("models", "Cost models.");
     py::module_ algorithms = m.def_submodule("algorithms", "Detection algorithms.");

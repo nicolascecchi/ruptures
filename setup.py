@@ -77,10 +77,9 @@ def pybind_ext_modules():
             # carma bridges NumPy and Armadillo, so the NumPy headers are needed.
             include_dirs=CPP_INCLUDE_DIRS + [numpy.get_include()],
             cxx_std=17,
-            # BLAS/LAPACK are linked directly, mirroring upstream
-            # miniruptures' find_package(BLAS)/find_package(LAPACK): the
-            # constant-normal model needs only cumsums, but the rank model
-            # (svd/pinv) and the linear models (solve) call into LAPACK.
+            # BLAS/LAPACK are linked directly: the constant-normal model
+            # needs only cumsums, but the rank model (svd/pinv) and the
+            # linear models (solve) call into LAPACK.
             # The Armadillo wrapper stays unused (the header-only submodules
             # provide the C++ API).
             libraries=["lapack", "blas"],
