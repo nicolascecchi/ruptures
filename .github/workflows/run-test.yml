@@ -5,7 +5,7 @@ name: build
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, cpp-structure-migration ]
   pull_request:
     branches: [ master ]
     paths-ignore:
@@ -24,6 +24,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v5
+      with:
+        # submodules: the C++ core cannot build without extern/{armadillo,carma,pybind11}
+        # fetch-depth: setuptools-scm needs the tags to compute the version
+        submodules: recursive
+        fetch-depth: 0
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v6
       with:
@@ -41,6 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
+      with:
+        submodules: recursive
+        fetch-depth: 0
     - name: Set up Python 3.14
       uses: actions/setup-python@v6
       with:
