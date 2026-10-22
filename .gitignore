@@ -70,8 +70,6 @@ make.bat
 ruptures.sublime-project
 ruptures.sublime-workspace
 test.ipynb
-ruptures/detection/.circleci/run-build-locally.sh
-.circleci/run-build-locally.sh
 docs/build/*
 
 # OS generated files
@@ -83,4 +81,4 @@ docs/build/*
 ehthumbs.db
 Thumbs.db
 site/
-src/ruptures/version.py
+python/src/ruptures/version.py
