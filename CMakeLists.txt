@@ -57,6 +57,10 @@ if(NOT RUPTURES_MISSING_CORE)
     # cumsums, but the rank model (svd/pinv) and the linear models (solve) call
     # into LAPACK. The Armadillo wrapper stays unused (the header-only submodules
     # provide the C++ API).
+    if(APPLE)
+        # FindBLAS is not reliable at picking up Accelerate otherwise.
+        set(BLA_VENDOR "Apple")
+    endif()
     find_package(BLAS REQUIRED)
     find_package(LAPACK REQUIRED)
 
