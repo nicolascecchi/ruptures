@@ -46,9 +46,6 @@ jobs:
         New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
         Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
         Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=C:/openblas-prefix"
-        # bin/x64 holds libopenblas.dll and its MinGW runtime DLLs, needed when
-        # pytest imports the extension.
-        Add-Content $env:GITHUB_ENV "PATH=C:/openblas/OpenBLAS/lib/native/bin/x64;$env:PATH"
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v6
       with:
@@ -57,6 +54,14 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install "./python[test]"
+    - name: Provide OpenBLAS DLLs (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # Python >=3.8 ignores PATH when resolving an extension module's DLL
+        # dependencies, so the DLLs must sit next to the package.
+        $pkg = python -c "import importlib.util, os; print(os.path.dirname(importlib.util.find_spec('ruptures').origin))"
+        Copy-Item C:\openblas\OpenBLAS\lib\native\bin\x64\*.dll $pkg
     - name: Test with pytest
       working-directory: python
       run: |
