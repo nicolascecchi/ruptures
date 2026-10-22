@@ -36,11 +36,19 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y libopenblas-dev liblapack-dev
     - name: Install OpenBLAS (Windows)
       if: runner.os == 'Windows'
-      shell: bash
+      shell: pwsh
       run: |
-        choco install openblas --yes --no-progress
-        libdir=$(find /c/ProgramData/chocolatey/lib/openblas -name '*.lib' | sed 's|/[^/]*$||' | head -1)
-        echo "LIB=$libdir" >> "$GITHUB_ENV"
+        # The nuget OpenBLAS package (as used by mlpack's CI) bundles the
+        # LAPACK routines in the same library; vcpkg's openblas is BLAS-only
+        # and there is no system LAPACK on Windows. Reshape the import
+        # library into a lib/ layout that find_package(BLAS) searches.
+        nuget install OpenBLAS -ExcludeVersion -o C:\openblas
+        New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
+        Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
+        Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=C:/openblas-prefix"
+        # bin/x64 holds libopenblas.dll and its MinGW runtime DLLs, needed when
+        # pytest imports the extension.
+        Add-Content $env:GITHUB_ENV "PATH=C:/openblas/OpenBLAS/lib/native/bin/x64;$env:PATH"
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v6
       with:

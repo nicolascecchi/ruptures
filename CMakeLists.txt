@@ -60,9 +60,20 @@ if(NOT RUPTURES_MISSING_CORE)
     if(APPLE)
         # FindBLAS is not reliable at picking up Accelerate otherwise.
         set(BLA_VENDOR "Apple")
+    elseif(WIN32)
+        # CI installs the nuget OpenBLAS package, which bundles the LAPACK
+        # routines in the same library (see run-test.yml); FindBLAS's OpenBLAS
+        # branch locates it, and it also provides the LAPACK half below.
+        set(BLA_VENDOR "OpenBLAS")
     endif()
     find_package(BLAS REQUIRED)
-    find_package(LAPACK REQUIRED)
+    if(WIN32)
+        # Windows has no system LAPACK; OpenBLAS ships the LAPACK routines
+        # in the same library, so we reuse it instead of searching.
+        set(LAPACK_LIBRARIES "${BLAS_LIBRARIES}")
+    else()
+        find_package(LAPACK REQUIRED)
+    endif()
 
     add_library(Models STATIC)
     target_sources(Models
