@@ -4,16 +4,9 @@
 name: build
 
 on:
-  push:
-    branches: [ master, cpp-structure-migration ]
-  pull_request:
-    branches: [ master ]
-    paths-ignore:
-      - '.pre-commit-config.yaml'
-      - 'docs/**'
-      - 'images/**'
-      - '**.md'
-      - 'mkdocs.yml'
+  # Manual only: the matrix builds the C++ core on three OSes across five
+  # Python versions, which is too heavy to spend on every push.
+  workflow_dispatch:
 
 jobs:
   tests:
