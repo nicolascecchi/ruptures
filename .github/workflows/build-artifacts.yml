@@ -2,8 +2,9 @@ name: build-artifacts
 
 # Build the sdist and wheels exactly as the release workflow does, then install
 # those artifacts in clean environments. Nothing is published to an index.
-# Manual only: a full three-OS build is too heavy to spend on every push.
 on:
+  push:
+    branches: [master, cpp-structure-migration]
   workflow_dispatch:
 
 permissions:
@@ -82,6 +83,11 @@ jobs:
           New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
           Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
           Copy-Item C:\openblas\OpenBLAS\lib\native\bin\x64\*.dll C:\openblas-prefix\lib
+          # find_package(BLAS) only sees the prefix when it is in the process
+          # environment, the way the pip builds of run-test.yml and verify-sdist
+          # set it. Passing it solely through CIBW_ENVIRONMENT_WINDOWS left the
+          # configure reporting "Could NOT find BLAS (missing: BLAS_LIBRARIES)".
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=C:/openblas-prefix"
       - name: Install Rosetta (macOS)
         if: runner.os == 'macOS'
         # macOS runners are arm64; cibuildwheel builds and tests the x86_64
@@ -199,6 +205,8 @@ jobs:
             echo "::error::the sdist build skipped ruptures._core"
             exit 1
           fi
+          # pytest is a test-only dependency and is not pulled in by the sdist.
+          "$VPY" -m pip install pytest
       - name: Provide OpenBLAS DLLs (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

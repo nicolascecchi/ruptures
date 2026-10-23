@@ -83,6 +83,10 @@ jobs:
           New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
           Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
           Copy-Item C:\openblas\OpenBLAS\lib\native\bin\x64\*.dll C:\openblas-prefix\lib
+          # find_package(BLAS) only sees the prefix when it is in the process
+          # environment. Passing it solely through CIBW_ENVIRONMENT_WINDOWS
+          # leaves the configure reporting "Could NOT find BLAS".
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=C:/openblas-prefix"
 
       - name: Install Rosetta (macOS)
         if: runner.os == 'macOS'
