@@ -52,6 +52,21 @@ target_include_directories(carma INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/extern/carma/include"
 )
 
+# Armadillo selects its allocator with preprocessor macros, and both the
+# memory helpers and the destructors of the classes holding matrices are
+# inline: every translation unit including <armadillo> must agree on the
+# allocator. Otherwise the linker may keep a destructor that frees with a
+# different routine than the one that allocated, which corrupts the heap on
+# Windows (where the default is the _aligned_malloc/_aligned_free pair).
+# Pin the process allocator in every unit, and tell carma not to install
+# NumPy's allocator on top of it.
+add_library(ruptures_arma_alloc INTERFACE)
+target_compile_definitions(ruptures_arma_alloc INTERFACE
+    ARMA_ALIEN_MEM_ALLOC_FUNCTION=std::malloc
+    ARMA_ALIEN_MEM_FREE_FUNCTION=std::free
+    CARMA_ARMA_ALIEN_MEM_FUNCTIONS_SET
+)
+
 if(NOT RUPTURES_MISSING_CORE)
     # BLAS/LAPACK are linked directly: the constant-normal model needs only
     # cumsums, but the rank model (svd/pinv) and the linear models (solve) call
@@ -116,6 +131,7 @@ if(NOT RUPTURES_MISSING_CORE)
         "${CMAKE_CURRENT_SOURCE_DIR}/extern/armadillo/include"
     )
     target_compile_definitions(Models PUBLIC ARMA_DONT_USE_WRAPPER)
+    target_link_libraries(Models PUBLIC ruptures_arma_alloc)
 
     add_library(Algorithms STATIC)
     target_sources(Algorithms
@@ -134,6 +150,7 @@ if(NOT RUPTURES_MISSING_CORE)
         "${CMAKE_CURRENT_SOURCE_DIR}/extern/armadillo/include"
     )
     target_compile_definitions(Algorithms PUBLIC ARMA_DONT_USE_WRAPPER)
+    target_link_libraries(Algorithms PUBLIC ruptures_arma_alloc)
 endif()
 
 # --- Python bindings ----------------------------------------------------------
@@ -209,6 +226,7 @@ if(BUILD_PYTHON_BINDINGS)
         # carma bridges NumPy and Armadillo, so the NumPy headers are needed.
         target_include_directories(_core PRIVATE "${Python3_NumPy_INCLUDE_DIRS}")
         target_link_libraries(_core PRIVATE
+            ruptures_arma_alloc
             Models
             Algorithms
             carma

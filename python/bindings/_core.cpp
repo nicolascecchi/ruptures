@@ -15,9 +15,15 @@
  * ...) mirror ruptures' Python naming; the C++ class names are left
  * unchanged.
  *
- * NOTE: <carma> must be included before <armadillo> so that carma can install
- * the NumPy allocator hooks into Armadillo (see carma docs).
+ * NOTE: <carma> must be included before <armadillo> so that its converters are
+ * installed. carma would by default swap Armadillo's allocator for NumPy's;
+ * the allocator is pinned for the whole core instead (the
+ * ruptures_arma_alloc target in CMakeLists.txt), which also stops carma from
+ * installing its own hook, so every translation unit frees with the same
+ * allocator.
  */
+#include <cstdlib>
+
 #include <carma>
 
 #include <armadillo>
