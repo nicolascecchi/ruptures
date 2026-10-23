@@ -13,10 +13,9 @@ on:
 
 env:
   CIBW_BUILD_VERBOSITY: 3
+  # Applies to the sdist build. The wheel jobs read the version back from the
+  # sdist filename, since the expanded sdist has no .git for setuptools-scm.
   SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.event.inputs.overrideVersion }}
-  # Run the package tests using `pytest`
-  CIBW_TEST_REQUIRES: pytest
-  CIBW_TEST_COMMAND: pytest {project}/python/tests
 
 jobs:
   make_sdist:
@@ -24,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The sdist force-includes ../extern/{armadillo,carma}/include.
+          submodules: recursive
+          fetch-depth: 0
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -32,15 +35,16 @@ jobs:
         run: python -m pip install build twine
       - name: Build SDist
         run: python -m build --sdist --outdir dist python
+      - name: Check metadata
+        run: twine check --strict dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-sdist
           path: dist/*.tar.gz
-      - name: Check metadata
-        run: twine check dist/*
 
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
+    needs: make_sdist
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -52,18 +56,57 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: cibw-sdist
+          path: dist
+
+      - name: Read the sdist version
+        shell: bash
+        run: |
+          f=$(ls dist/*.tar.gz)
+          v=${f##*/}
+          v=${v#ruptures-}
+          v=${v%.tar.gz}
+          echo "DIST_VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Install OpenBLAS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The nuget OpenBLAS package bundles the LAPACK routines in the same
+          # library; reshape it into a lib/ layout that find_package(BLAS)
+          # searches. The DLLs go next to the import library so delvewheel can
+          # bundle them into the wheel.
+          nuget install OpenBLAS -ExcludeVersion -o C:\openblas
+          New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
+          Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
+          Copy-Item C:\openblas\OpenBLAS\lib\native\bin\x64\*.dll C:\openblas-prefix\lib
+
+      - name: Install Rosetta (macOS)
+        if: runner.os == 'macOS'
+        # macOS runners are arm64; cibuildwheel builds and tests the x86_64
+        # wheels through Rosetta, which the image does not ship preinstalled.
+        # The command exits non-zero when Rosetta is already present.
+        run: sudo softwareupdate --install-rosetta --agree-to-license || true
+
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel
 
       - name: Build wheels
-        run: python -m cibuildwheel python --output-dir wheelhouse
+        shell: bash
+        # Building from the sdist enables the if.from-sdist override
+        # (cmake.source-dir=".", RUPTURES_REQUIRE_CORE=ON), so a missing core
+        # fails the configure instead of producing a backend-less wheel.
+        run: python -m cibuildwheel dist/*.tar.gz --output-dir wheelhouse
         env:
-          # Disable explicitly building PyPI wheels for specific configurations
-          CIBW_SKIP: cp{38,310,311,312,313,314}-manylinux_i686 *-musllinux_* cp{38,310,311,312,313,314,314t}-win32
-          CIBW_PRERELEASE_PYTHONS: False
-          # Manually force a version (and avoid building local wheels)
-          CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ github.event.inputs.overrideVersion }}"
           CIBW_ARCHS_MACOS: x86_64 arm64
+          CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.DIST_VERSION }}"
+          CIBW_ENVIRONMENT_WINDOWS: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.DIST_VERSION }}
+            CMAKE_PREFIX_PATH=C:/openblas-prefix
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: "delvewheel repair -w {dest_dir} -v {wheel} --add-path C:/openblas-prefix/lib"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -72,6 +115,7 @@ jobs:
 
   build_aarch64_wheels:
     name: Build wheels manylinux_aarch64
+    needs: make_sdist
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -86,16 +130,30 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
+      - uses: actions/download-artifact@v5
+        with:
+          name: cibw-sdist
+          path: dist
+
+      - name: Read the sdist version
+        shell: bash
+        run: |
+          f=$(ls dist/*.tar.gz)
+          v=${f##*/}
+          v=${v#ruptures-}
+          v=${v%.tar.gz}
+          echo "DIST_VERSION=$v" >> "$GITHUB_ENV"
+
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel
 
       - name: Build wheels
-        run: python -m cibuildwheel python --output-dir wheelhouse
+        shell: bash
+        run: python -m cibuildwheel dist/*.tar.gz --output-dir wheelhouse
         env:
           CIBW_ARCHS_LINUX: ${{matrix.arch}}
           CIBW_BUILD: cp${{ matrix.python }}-${{ matrix.platform_id }}
-          # Manually force a version (and avoid building local wheels)
-          CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ github.event.inputs.overrideVersion }}"
+          CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.DIST_VERSION }}"
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-aarch64_wheels-${{ matrix.os }}-${{ strategy.job-index }}

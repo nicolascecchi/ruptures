@@ -1,0 +1,276 @@
+name: build-artifacts
+
+# Build the sdist and wheels exactly as the release workflow does, then install
+# those artifacts in clean environments. Nothing is published to an index.
+on:
+  pull_request:
+    branches: [cpp-structure-migration]
+    paths:
+      - "python/**"
+      - "cpp/**"
+      - "extern/**"
+      - "CMakeLists.txt"
+      - ".gitmodules"
+      - ".github/workflows/build-artifacts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-artifacts-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CIBW_BUILD_VERBOSITY: 1
+  # Full matrix on demand; the oldest and newest supported versions on PRs.
+  # (Inlined into each matrix: the env context is not available in `strategy`.)
+
+jobs:
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The sdist force-includes ../extern/{armadillo,carma}/include.
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install build tools
+        run: python -m pip install build twine
+      - name: Build sdist
+        run: python -m build --sdist --outdir dist python
+      - name: Check metadata
+        run: twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  wheels:
+    name: Wheels (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: sdist
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["3.10","3.11","3.12","3.13","3.14"]') || fromJSON('["3.10","3.14"]') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@v5
+        with:
+          name: artifacts-sdist
+          path: dist
+      - name: Read the sdist version
+        shell: bash
+        run: |
+          f=$(ls dist/*.tar.gz)
+          v=${f##*/}
+          v=${v#ruptures-}
+          v=${v%.tar.gz}
+          echo "DIST_VERSION=$v" >> "$GITHUB_ENV"
+          echo "Building version $v"
+          # The expression language has no replace(), so strip the dot here.
+          py='${{ matrix.python }}'
+          echo "CIBW_BUILD=cp${py//./}-*" >> "$GITHUB_ENV"
+      - name: Install OpenBLAS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The nuget OpenBLAS package bundles the LAPACK routines in the same
+          # library; reshape it into a lib/ layout that find_package(BLAS)
+          # searches. The DLLs go next to the import library so delvewheel can
+          # bundle them into the wheel.
+          nuget install OpenBLAS -ExcludeVersion -o C:\openblas
+          New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
+          Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
+          Copy-Item C:\openblas\OpenBLAS\lib\native\bin\x64\*.dll C:\openblas-prefix\lib
+      - name: Install Rosetta (macOS)
+        if: runner.os == 'macOS'
+        # macOS runners are arm64; cibuildwheel builds and tests the x86_64
+        # wheels through Rosetta, which the image does not ship preinstalled.
+        # The command exits non-zero when Rosetta is already present.
+        run: sudo softwareupdate --install-rosetta --agree-to-license || true
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel
+      - name: Build wheels
+        shell: bash
+        # Building from the sdist enables scikit-build-core's if.from-sdist
+        # override: cmake.source-dir="." and RUPTURES_REQUIRE_CORE=ON, so a
+        # missing C++ core is a hard configure error instead of a warning.
+        run: python -m cibuildwheel dist/*.tar.gz --output-dir wheelhouse
+        env:
+          CIBW_ARCHS_MACOS: x86_64 arm64
+          CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.DIST_VERSION }}"
+          CIBW_ENVIRONMENT_WINDOWS: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.DIST_VERSION }}
+            CMAKE_PREFIX_PATH=C:/openblas-prefix
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: "delvewheel repair -w {dest_dir} -v {wheel} --add-path C:/openblas-prefix/lib"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-wheels-${{ matrix.os }}-${{ matrix.python }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  verify-wheel:
+    name: Verify wheel (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["3.10","3.11","3.12","3.13","3.14"]') || fromJSON('["3.10","3.14"]') }}
+    env:
+      # The runner context is not available in a job-level env block; the os
+      # matrix is, and the three labels are fixed.
+      VPY: ${{ matrix.os == 'windows-latest' && format('{0}/.venv/Scripts/python.exe', github.workspace) || format('{0}/.venv/bin/python', github.workspace) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: artifacts-wheels-${{ matrix.os }}-${{ matrix.python }}
+          path: wheelhouse
+      - name: Create a clean environment and install the wheel
+        shell: bash
+        run: |
+          python -m venv .venv
+          "$VPY" -m pip install --upgrade pip
+          "$VPY" -m pip install pytest numpy scipy typing_extensions
+          # --only-binary keeps pip on the wheel and never builds the sdist.
+          "$VPY" -m pip install --no-deps --no-index --only-binary=:all: \
+            --find-links wheelhouse ruptures
+      - name: The compiled backend must be present
+        shell: bash
+        run: |
+          "$VPY" - <<'PY'
+          import ruptures
+          import ruptures._core as core
+
+          assert "site-packages" in ruptures.__file__, ruptures.__file__
+          assert hasattr(core.models, "ConstantNormal")
+          assert hasattr(core.algorithms, "PELT")
+          print("installed", ruptures.__version__, "from", ruptures.__file__)
+          PY
+      - name: Run the test suite against the installed wheel
+        working-directory: python
+        shell: bash
+        run: '"$VPY" -m pytest tests -q'
+
+  verify-sdist:
+    name: Verify sdist (${{ matrix.os }})
+    needs: sdist
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      # The runner context is not available in a job-level env block; the os
+      # matrix is, and the three labels are fixed.
+      VPY: ${{ matrix.os == 'windows-latest' && format('{0}/.venv/Scripts/python.exe', github.workspace) || format('{0}/.venv/bin/python', github.workspace) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install BLAS (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev liblapack-dev
+      - name: Install OpenBLAS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          nuget install OpenBLAS -ExcludeVersion -o C:\openblas
+          New-Item -ItemType Directory -Force C:\openblas-prefix\lib | Out-Null
+          Copy-Item C:\openblas\OpenBLAS\lib\native\lib\x64\libopenblas.dll.a C:\openblas-prefix\lib\openblas.lib
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=C:/openblas-prefix"
+      - uses: actions/download-artifact@v5
+        with:
+          name: artifacts-sdist
+          path: dist
+      - name: Build and install the sdist
+        shell: bash
+        run: |
+          python -m venv .venv
+          "$VPY" -m pip install --upgrade pip
+          "$VPY" -m pip install dist/*.tar.gz 2>&1 | tee build.log
+          if grep -q "skipping the C++ core" build.log; then
+            echo "::error::the sdist build skipped ruptures._core"
+            exit 1
+          fi
+      - name: Provide OpenBLAS DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Python >=3.8 ignores PATH when resolving an extension's DLL
+          # dependencies, so the DLLs must sit next to the package.
+          $pkg = & $env:VPY -c "import importlib.util, os; print(os.path.dirname(importlib.util.find_spec('ruptures').origin))"
+          Copy-Item C:\openblas\OpenBLAS\lib\native\bin\x64\*.dll $pkg
+      - name: Check the compiled backend
+        shell: bash
+        run: |
+          "$VPY" -c "import ruptures, ruptures._core; print(ruptures.__version__, ruptures.__file__)"
+      - name: Run the compiled-backend tests
+        working-directory: python
+        shell: bash
+        run: >-
+          "$VPY" -m pytest tests/test_pelt_compiled.py
+          tests/test_dynp_compiled.py tests/test_model_var.py -q
+
+  aarch64-wheels:
+    name: Wheels (manylinux_aarch64, Python ${{ matrix.python }})
+    # QEMU builds are slow; run them on demand, not on every PR.
+    if: github.event_name == 'workflow_dispatch'
+    needs: sdist
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - uses: actions/download-artifact@v5
+        with:
+          name: artifacts-sdist
+          path: dist
+      - name: Read the sdist version
+        shell: bash
+        run: |
+          f=$(ls dist/*.tar.gz)
+          v=${f##*/}
+          v=${v#ruptures-}
+          v=${v%.tar.gz}
+          echo "DIST_VERSION=$v" >> "$GITHUB_ENV"
+          # The expression language has no replace(), so strip the dot here.
+          py='${{ matrix.python }}'
+          echo "CIBW_BUILD=cp${py//./}-manylinux_aarch64" >> "$GITHUB_ENV"
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel
+      - name: Build aarch64 wheels
+        shell: bash
+        run: python -m cibuildwheel dist/*.tar.gz --output-dir wheelhouse
+        env:
+          CIBW_ARCHS_LINUX: aarch64
+          CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.DIST_VERSION }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-wheels-aarch64-${{ matrix.python }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
