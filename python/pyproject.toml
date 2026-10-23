@@ -117,6 +117,24 @@ if.from-sdist = true
 cmake.source-dir = "."
 cmake.define.RUPTURES_REQUIRE_CORE = "ON"
 
+# Wheel builds (shared by the release and artifact-verification workflows).
+# Both invoke cibuildwheel on the sdist tarball, so the project directory is
+# the expanded sdist root and the tests sit directly under it.
+[tool.cibuildwheel]
+# scikit-build-core is a PEP 517 backend; `build` is the supported frontend.
+build-frontend = "build"
+build = ["cp310-*", "cp311-*", "cp312-*", "cp313-*", "cp314-*"]
+skip = ["*-musllinux_*", "*-manylinux_i686", "*-win32", "cp314t-*"]
+test-requires = ["pytest"]
+# {package} is the project directory itself, which is the expanded sdist root
+# when cibuildwheel is given a tarball, and python/ when given a directory.
+test-command = "pytest {package}/tests -q"
+
+[tool.cibuildwheel.linux]
+# BLAS/LAPACK are linked by the root CMakeLists. manylinux_2_28 is the default
+# image; install the dev packages once per container (auditwheel bundles them).
+before-all = "dnf install -y openblas-devel lapack-devel"
+
 # pytest config
 # For more information, see:
 # https://docs.pytest.org/en/stable/customize.html#pyproject-toml
